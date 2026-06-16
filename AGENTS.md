@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本 repo 目前已有 Go 版 MVP。工作時先把它當成「MCP harness runtime + Web 控制台」專案。approval queue、外接 MCP client、tool history/diff/restore 都已有檔案式 MVP；不要把完整資料庫、完整權限政策、完整 schema validation 或 e2e 說成已完成。
+本 repo 目前已有 Go 版 MVP。工作時先把它當成「MCP harness runtime + Web 控制台」專案。approval queue、外接 MCP client、內建工具 schema validation、tool history/diff/restore 都已有檔案式 MVP；不要把完整資料庫、完整權限政策、外接 MCP 動態 schema validation 或 e2e 說成已完成。
 
 ## 專案定位
 

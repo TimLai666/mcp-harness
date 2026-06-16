@@ -22,6 +22,7 @@ type ToolsetRegistry struct {
 	sessionID string
 	access    AccessMode
 	approval  ApprovalStore
+	schemas   map[string]ToolSchema
 	handlers  map[string]func(context.Context, map[string]any) (any, error)
 }
 
@@ -29,7 +30,7 @@ func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry, sessionID st
 	if access == "" {
 		access = AccessDefault
 	}
-	r := &ToolsetRegistry{workspace: workspace, skills: skills, sessionID: sessionID, access: access}
+	r := &ToolsetRegistry{workspace: workspace, skills: skills, sessionID: sessionID, access: access, schemas: BuiltinToolSchemas()}
 	r.handlers = map[string]func(context.Context, map[string]any) (any, error){
 		"workspace.list_files":  r.workspaceListFiles,
 		"workspace.read_file":   r.workspaceReadFile,
@@ -60,7 +61,12 @@ func (r *ToolsetRegistry) Catalog() map[string][]map[string]any {
 	out := map[string][]map[string]any{}
 	for name := range r.handlers {
 		parts := strings.SplitN(name, ".", 2)
-		out[parts[0]] = append(out[parts[0]], map[string]any{"name": parts[1]})
+		item := map[string]any{"name": parts[1]}
+		if schema, ok := r.schemas[name]; ok {
+			item["description"] = schema.Description
+			item["args"] = schema.Args
+		}
+		out[parts[0]] = append(out[parts[0]], item)
 	}
 	return out
 }
@@ -80,6 +86,9 @@ func (r *ToolsetRegistry) Execute(ctx context.Context, call HarnessCall) (observ
 	handler, ok := r.handlers[call.Tool]
 	if !ok {
 		return Observation{CallID: callID, Tool: call.Tool, Status: "error", Error: "unknown tool"}
+	}
+	if err := ValidateToolArgs(call.Tool, call.Args, r.schemas); err != nil {
+		return Observation{CallID: callID, Tool: call.Tool, Status: "error", Error: "invalid args: " + err.Error()}
 	}
 	if reason := r.approvalReason(call); reason != "" {
 		if r.access == AccessFullAccess {
