@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本 repo 目前已有 Go 版 MVP。工作時先把它當成「MCP harness runtime + Web 控制台」專案。SQLite primary store、approval queue、外接 MCP client、內建工具 schema validation、tool history/diff/restore 都已有 MVP；不要把完整權限政策、外接 MCP 動態 schema validation 或 e2e 說成已完成。
+本 repo 目前已有 Go 版 MVP。工作時先把它當成「MCP harness runtime + Web 控制台」專案。SQLite primary store、approval queue、外接 MCP client、內建工具 schema validation、外接 MCP dynamic input schema validation、tool history/diff/restore、基本 MCP/Web e2e 都已有 MVP；不要把多使用者/RBAC、blob GC 或完整瀏覽器 e2e 說成已完成。
 
 ## 專案定位
 
@@ -13,7 +13,7 @@
 - 每個 harness tool call 都要記錄 history 與 step-level diff；即使檔案是被 `terminal.run` 改到，也要由前後 snapshot 算出 diff。
 - Harness 本身不內建模型。
 - Web UI 是控制台，用來管理 projects、sessions、toolsets、skills、approvals，不是行銷頁，也不是聊天或任務輸入介面。
-- Direct MCP tools 可以暴露查詢型能力，例如 projects、skills、MCP server list、approvals list、history list/show；會改檔、跑 shell、restore version、修改 MCP 設定、或呼叫外部 MCP server 的能力要留在 `harness()` 內，走 mode、approval、history/diff。
+- Direct MCP tools 可以暴露查詢型能力，例如 projects、skills、MCP server list、approvals list、history list/show、restore preview；會改檔、跑 shell、真正 restore version、修改 MCP 設定、或呼叫外部 MCP server 的能力要留在 `harness()` 內，走 mode、approval、history/diff。
 
 ## 目前檔案
 
@@ -26,9 +26,8 @@
 - `internal/harness`：核心 runtime、toolsets、skills、prompt 合成。
 - `internal/web`：Web API 與 HTML 控制台。
 - `MCP_HARNESS_HOME/harness.db`：SQLite primary store。
-- `MCP_HARNESS_HOME/history`：檔案式 history/version store。
-- `MCP_HARNESS_HOME/approvals`：檔案式 approval queue。
-- `MCP_HARNESS_HOME/mcps.json`：外接 MCP server 設定。
+- `MCP_HARNESS_HOME/history/blobs`：workspace version snapshot blob store。
+- `MCP_HARNESS_HOME/mcps.json`：legacy 外接 MCP server 設定匯入來源；DB 建好後以 SQLite 為主。
 
 如果新增實作，請同步更新 README 的「目前狀態」與里程碑，不要讓文件宣稱未實作功能已可用。
 

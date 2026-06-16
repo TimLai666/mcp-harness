@@ -11,6 +11,7 @@ func ComposeSystemPrompt(
 	catalog map[string][]map[string]any,
 	skills *SkillRegistry,
 	references []ReferencedFile,
+	instructions []ProjectInstruction,
 	observations []Observation,
 	activeSkillNames []string,
 ) string {
@@ -26,15 +27,16 @@ func ComposeSystemPrompt(
 		})
 	}
 	context := map[string]any{
-		"current_project":    workspace.Project,
-		"sandbox_path":       workspace.SandboxPath,
-		"mode":               workspace.Mode,
-		"access_mode":        accessMode,
-		"available_toolsets": catalog,
-		"available_skills":   skills.List(),
-		"active_skills":      activeSkills,
-		"referenced_files":   references,
-		"observations":       observations,
+		"current_project":      workspace.Project,
+		"sandbox_path":         workspace.SandboxPath,
+		"mode":                 workspace.Mode,
+		"access_mode":          accessMode,
+		"available_toolsets":   catalog,
+		"available_skills":     skills.List(),
+		"active_skills":        activeSkills,
+		"referenced_files":     references,
+		"project_instructions": instructions,
+		"observations":         observations,
 	}
 	contextJSON, _ := json.MarshalIndent(context, "", "  ")
 	parts := []string{

@@ -26,3 +26,17 @@ func TestResolveReferencesInjectsSmallTextFile(t *testing.T) {
 		t.Fatalf("unexpected ref: %#v", refs[0])
 	}
 }
+
+func TestLoadProjectInstructionsInjectsRootAgentFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Follow repo rules."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	instructions := LoadProjectInstructions(Workspace{Root: root, Mode: ModeWork}, 40000)
+	if len(instructions) != 1 {
+		t.Fatalf("expected 1 instruction file, got %#v", instructions)
+	}
+	if !instructions[0].Complete || instructions[0].Path != "AGENTS.md" || instructions[0].Content != "Follow repo rules." {
+		t.Fatalf("unexpected instruction: %#v", instructions[0])
+	}
+}

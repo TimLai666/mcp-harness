@@ -19,6 +19,10 @@ func (ProjectRegistry) List() ([]Project, error) {
 }
 
 func (r ProjectRegistry) Add(path, name, projectID, description string, mode Mode) (Project, error) {
+	return r.AddWithAllowedToolsets(path, name, projectID, description, mode, nil)
+}
+
+func (r ProjectRegistry) AddWithAllowedToolsets(path, name, projectID, description string, mode Mode, allowedToolsets []string) (Project, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return Project{}, err
@@ -52,14 +56,29 @@ func (r ProjectRegistry) Add(path, name, projectID, description string, mode Mod
 		mode = ModeInspect
 	}
 	project := Project{
-		ID:          projectID,
-		Name:        name,
-		Path:        abs,
-		Description: description,
-		DefaultMode: mode,
+		ID:              projectID,
+		Name:            name,
+		Path:            abs,
+		Description:     description,
+		DefaultMode:     mode,
+		AllowedToolsets: normalizeAllowedToolsets(allowedToolsets),
 	}
 	projects = append(projects, project)
 	return project, SaveProjects(projects)
+}
+
+func normalizeAllowedToolsets(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func (r ProjectRegistry) Resolve(project string, mode Mode) (Workspace, error) {

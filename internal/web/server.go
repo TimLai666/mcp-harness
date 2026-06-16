@@ -34,17 +34,18 @@ func NewHandler() http.Handler {
 	})
 	mux.HandleFunc("POST /api/projects", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Path        string       `json:"path"`
-			Name        string       `json:"name"`
-			ProjectID   string       `json:"project_id"`
-			Description string       `json:"description"`
-			DefaultMode harness.Mode `json:"default_mode"`
+			Path            string       `json:"path"`
+			Name            string       `json:"name"`
+			ProjectID       string       `json:"project_id"`
+			Description     string       `json:"description"`
+			DefaultMode     harness.Mode `json:"default_mode"`
+			AllowedToolsets []string     `json:"allowed_toolsets"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, err)
 			return
 		}
-		project, err := projects.Add(req.Path, req.Name, req.ProjectID, req.Description, req.DefaultMode)
+		project, err := projects.AddWithAllowedToolsets(req.Path, req.Name, req.ProjectID, req.Description, req.DefaultMode, req.AllowedToolsets)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -285,6 +286,7 @@ const indexHTML = `<!doctype html>
       <h3>Add Project</h3>
       <label>Name</label><input id="newName" placeholder="Optional display name">
       <label>Path</label><input id="newPath" placeholder="C:\\Users\\...\\repo">
+      <label>Allowed toolsets</label><input id="newAllowedToolsets" placeholder="workspace,git,terminal">
       <button onclick="addProject()">Add project</button>
     </aside>
     <main>
@@ -464,7 +466,8 @@ const indexHTML = `<!doctype html>
       }
     }
     async function addProject() {
-      const payload = { name: document.getElementById('newName').value || '', path: document.getElementById('newPath').value };
+      const allowed = document.getElementById('newAllowedToolsets').value.split(',').map(v => v.trim()).filter(Boolean);
+      const payload = { name: document.getElementById('newName').value || '', path: document.getElementById('newPath').value, allowed_toolsets: allowed };
       const res = await fetch('/api/projects', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
       setDetail(await res.json());
       await refreshProjects();

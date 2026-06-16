@@ -2,10 +2,13 @@ package harness
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,7 +97,7 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, timestamp TEXT NOT NULL, status TEXT NOT NULL, request_json TEXT NOT NULL, response_json TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS tool_calls (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, turn_id TEXT NOT NULL, call_index INTEGER NOT NULL, tool TEXT NOT NULL, status TEXT NOT NULL, args_json TEXT NOT NULL DEFAULT '{}', result_json TEXT NOT NULL DEFAULT 'null', error TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS history_events (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, session_id TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', workspace_root TEXT NOT NULL, mode TEXT NOT NULL, step INTEGER NOT NULL, tool TEXT NOT NULL, status TEXT NOT NULL, args_json TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '', before_version TEXT NOT NULL, after_version TEXT NOT NULL, diff TEXT NOT NULL DEFAULT '', diff_truncated INTEGER NOT NULL DEFAULT 0, snapshot_notice TEXT NOT NULL DEFAULT '')`,
-		`CREATE TABLE IF NOT EXISTS history_versions (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, session_id TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', workspace_root TEXT NOT NULL, mode TEXT NOT NULL, step INTEGER NOT NULL, tool TEXT NOT NULL, label TEXT NOT NULL, snapshot_json TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS history_versions (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, session_id TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', workspace_root TEXT NOT NULL, mode TEXT NOT NULL, step INTEGER NOT NULL, tool TEXT NOT NULL, label TEXT NOT NULL, snapshot_json TEXT NOT NULL DEFAULT '', snapshot_path TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS session_skills (session_id TEXT NOT NULL, skill_name TEXT NOT NULL, PRIMARY KEY(session_id, skill_name))`,
 		`CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, timestamp DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id, call_index)`,
@@ -106,7 +109,36 @@ func (s *SQLiteStore) migrate() error {
 			return err
 		}
 	}
+	if err := s.ensureColumn("history_versions", "snapshot_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES('v1', ?)`, nowUTC())
+	return err
+}
+
+func (s *SQLiteStore) ensureColumn(table, column, definition string) error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition)
 	return err
 }
 
@@ -455,14 +487,18 @@ func (s *SQLiteStore) ListToolCalls(sessionID string) ([]ToolCallRecord, error) 
 
 func (s *SQLiteStore) SaveWorkspaceVersion(version WorkspaceVersion) error {
 	defer s.closeIfNeeded()
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO history_versions(id, timestamp, session_id, project_id, project_name, workspace_root, mode, step, tool, label, snapshot_json) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		version.ID, version.Timestamp, version.SessionID, version.ProjectID, version.ProjectName, version.WorkspaceRoot, version.Mode, version.Step, version.Tool, version.Label, jsonString(version.Snapshot))
+	snapshotPath, err := saveSnapshotBlob(version)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT OR REPLACE INTO history_versions(id, timestamp, session_id, project_id, project_name, workspace_root, mode, step, tool, label, snapshot_json, snapshot_path) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		version.ID, version.Timestamp, version.SessionID, version.ProjectID, version.ProjectName, version.WorkspaceRoot, version.Mode, version.Step, version.Tool, version.Label, "", snapshotPath)
 	return err
 }
 
 func (s *SQLiteStore) LoadWorkspaceVersion(id string) (WorkspaceVersion, error) {
 	defer s.closeIfNeeded()
-	row := s.db.QueryRow(`SELECT id, timestamp, session_id, project_id, project_name, workspace_root, mode, step, tool, label, snapshot_json FROM history_versions WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id, timestamp, session_id, project_id, project_name, workspace_root, mode, step, tool, label, snapshot_json, snapshot_path FROM history_versions WHERE id=?`, id)
 	version, err := scanVersion(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WorkspaceVersion{}, fmt.Errorf("history version not found: %s", id)
@@ -575,11 +611,19 @@ func scanToolCall(s scanner) (ToolCallRecord, error) {
 
 func scanVersion(s scanner) (WorkspaceVersion, error) {
 	var version WorkspaceVersion
-	var snapshotJSON string
-	if err := s.Scan(&version.ID, &version.Timestamp, &version.SessionID, &version.ProjectID, &version.ProjectName, &version.WorkspaceRoot, &version.Mode, &version.Step, &version.Tool, &version.Label, &snapshotJSON); err != nil {
+	var snapshotJSON, snapshotPath string
+	if err := s.Scan(&version.ID, &version.Timestamp, &version.SessionID, &version.ProjectID, &version.ProjectName, &version.WorkspaceRoot, &version.Mode, &version.Step, &version.Tool, &version.Label, &snapshotJSON, &snapshotPath); err != nil {
 		return version, err
 	}
-	_ = json.Unmarshal([]byte(snapshotJSON), &version.Snapshot)
+	if snapshotJSON != "" {
+		_ = json.Unmarshal([]byte(snapshotJSON), &version.Snapshot)
+	} else if snapshotPath != "" {
+		snapshot, err := loadSnapshotBlob(snapshotPath)
+		if err != nil {
+			return version, err
+		}
+		version.Snapshot = snapshot
+	}
 	return version, nil
 }
 
@@ -612,6 +656,60 @@ func boolInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func saveSnapshotBlob(version WorkspaceVersion) (string, error) {
+	dir, err := HistoryBlobsDir()
+	if err != nil {
+		return "", err
+	}
+	name := filepath.Base(version.ID) + ".json.gz"
+	path := filepath.Join(dir, name)
+	data, err := json.Marshal(version.Snapshot)
+	if err != nil {
+		return "", err
+	}
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	if _, err := zw.Write(data); err != nil {
+		_ = zw.Close()
+		return "", err
+	}
+	if err := zw.Close(); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, compressed.Bytes(), 0o600); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(filepath.Join("history", "blobs", name)), nil
+}
+
+func loadSnapshotBlob(relPath string) (WorkspaceSnapshot, error) {
+	var snapshot WorkspaceSnapshot
+	base, err := AppDir()
+	if err != nil {
+		return snapshot, err
+	}
+	path := filepath.Clean(filepath.Join(base, filepath.FromSlash(relPath)))
+	if !strings.HasPrefix(path, filepath.Clean(base)+string(os.PathSeparator)) && filepath.Clean(path) != filepath.Clean(base) {
+		return snapshot, errors.New("snapshot blob path escapes harness home")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return snapshot, err
+	}
+	if strings.HasSuffix(path, ".gz") {
+		zr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return snapshot, err
+		}
+		defer zr.Close()
+		data, err = io.ReadAll(zr)
+		if err != nil {
+			return snapshot, err
+		}
+	}
+	return snapshot, json.Unmarshal(data, &snapshot)
 }
 
 func loadProjectsLegacy() ([]Project, error) {

@@ -87,6 +87,9 @@ func (r *ToolsetRegistry) Execute(ctx context.Context, call HarnessCall) (observ
 	if !ok {
 		return Observation{CallID: callID, Tool: call.Tool, Status: "error", Error: "unknown tool"}
 	}
+	if !r.toolsetAllowed(call.Tool) {
+		return Observation{CallID: callID, Tool: call.Tool, Status: "error", Error: "toolset is not allowed for this project"}
+	}
 	if err := ValidateToolArgs(call.Tool, call.Args, r.schemas); err != nil {
 		return Observation{CallID: callID, Tool: call.Tool, Status: "error", Error: "invalid args: " + err.Error()}
 	}
@@ -116,6 +119,22 @@ func (r *ToolsetRegistry) Execute(ctx context.Context, call HarnessCall) (observ
 		return Observation{CallID: callID, Tool: call.Tool, Status: "error", Error: err.Error()}
 	}
 	return Observation{CallID: callID, Tool: call.Tool, Status: "ok", Result: result}
+}
+
+func (r *ToolsetRegistry) toolsetAllowed(tool string) bool {
+	if r.workspace.Project == nil || len(r.workspace.Project.AllowedToolsets) == 0 {
+		return true
+	}
+	toolset, _, ok := strings.Cut(tool, ".")
+	if !ok {
+		return false
+	}
+	for _, allowed := range r.workspace.Project.AllowedToolsets {
+		if allowed == toolset {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *ToolsetRegistry) approvalReason(call HarnessCall) string {
@@ -423,6 +442,23 @@ func (r *ToolsetRegistry) mcpCall(ctx context.Context, args map[string]any) (any
 		return nil, err
 	}
 	defer session.Close()
+	tools, err := session.ListTools(cctx, &mcp.ListToolsParams{})
+	if err != nil {
+		return nil, err
+	}
+	var target *mcp.Tool
+	for _, candidate := range tools.Tools {
+		if candidate.Name == tool {
+			target = candidate
+			break
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("external MCP tool not found: %s.%s", serverID, tool)
+	}
+	if err := ValidateExternalMCPArgs(target.InputSchema, arguments); err != nil {
+		return nil, fmt.Errorf("invalid external MCP args for %s.%s: %w", serverID, tool, err)
+	}
 	res, err := session.CallTool(cctx, &mcp.CallToolParams{Name: tool, Arguments: arguments})
 	if err != nil {
 		return nil, err

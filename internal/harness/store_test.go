@@ -136,6 +136,27 @@ func TestSQLiteStorePersistsProjectApprovalHistoryAndSessions(t *testing.T) {
 	if len(events) != 1 || events[0].Tool != "workspace.write_file" {
 		t.Fatalf("expected persisted history, got %#v", events)
 	}
+	blobEntries, err := os.ReadDir(filepath.Join(home, "history", "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blobEntries) == 0 {
+		t.Fatal("expected workspace versions to be stored as snapshot blobs")
+	}
+	if filepath.Ext(blobEntries[0].Name()) != ".gz" {
+		t.Fatalf("expected compressed snapshot blob, got %s", blobEntries[0].Name())
+	}
+	store, err = DefaultStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := store.LoadWorkspaceVersion(events[0].AfterVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := version.Snapshot.Files["note.txt"].Content; got != "hello" {
+		t.Fatalf("expected loaded snapshot content, got %q", got)
+	}
 }
 
 func writeJSONFile(t *testing.T, path string, value any) {

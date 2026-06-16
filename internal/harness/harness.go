@@ -28,6 +28,7 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (RunResponse, error) 
 		return RunResponse{}, err
 	}
 	references := ResolveReferences(req.Message, workspace, 40000)
+	instructions := LoadProjectInstructions(workspace, 60000)
 	registry := NewToolsetRegistry(workspace, r.skills, sessionID, req.AccessMode)
 	calls, parseErr := ParseToolCalls(req.Message)
 	var observations []Observation
@@ -62,7 +63,7 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (RunResponse, error) 
 		}
 	}
 	_ = SaveSessionState(sessionState)
-	prompt := ComposeSystemPrompt(workspace, req.AccessMode, registry.Catalog(), r.skills, references, observations, sessionState.ActiveSkills)
+	prompt := ComposeSystemPrompt(workspace, req.AccessMode, registry.Catalog(), r.skills, references, instructions, observations, sessionState.ActiveSkills)
 	status := "ok"
 	errText := ""
 	if parseErr != nil {
@@ -79,6 +80,7 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (RunResponse, error) 
 		SystemPrompt:    prompt,
 		ActiveSkills:    sessionState.ActiveSkills,
 		ReferencedFiles: references,
+		Instructions:    instructions,
 		Observations:    observations,
 		HistoryEvents:   historyEvents,
 		Error:           errText,

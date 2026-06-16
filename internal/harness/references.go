@@ -6,7 +6,14 @@ import (
 	"strings"
 )
 
-var refRE = regexp.MustCompile(`@(?:"([^"]+)"|([^\s,，。;；:：)）\]}]+))`)
+var refRE = regexp.MustCompile(`@(?:"([^"]+)"|([^\s,;:!?()\[\]{}<>，。；：！？（）]+))`)
+
+var projectInstructionCandidates = []string{
+	"AGENTS.md",
+	"CLAUDE.md",
+	"GEMINI.md",
+	".github/copilot-instructions.md",
+}
 
 func FindReferences(message string) []string {
 	matches := refRE.FindAllStringSubmatch(message, -1)
@@ -73,6 +80,44 @@ func ResolveReferences(message string, workspace Workspace, maxInlineBytes int64
 			Content:  string(data),
 			Size:     int64(len(data)),
 		})
+	}
+	return out
+}
+
+func LoadProjectInstructions(workspace Workspace, maxInlineBytes int64) []ProjectInstruction {
+	var out []ProjectInstruction
+	for _, candidate := range projectInstructionCandidates {
+		path, err := ResolveInside(workspace.Root, candidate)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		rel := Rel(workspace.Root, path)
+		if IsSensitive(path) {
+			out = append(out, ProjectInstruction{Path: rel, Type: "text", Error: "sensitive_path"})
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			out = append(out, ProjectInstruction{Path: rel, Type: "unknown", Error: err.Error()})
+			continue
+		}
+		if IsBinary(data) {
+			out = append(out, ProjectInstruction{Path: rel, Type: "binary", Size: int64(len(data))})
+			continue
+		}
+		instruction := ProjectInstruction{Path: rel, Type: "text", Size: int64(len(data))}
+		if int64(len(data)) <= maxInlineBytes {
+			instruction.Complete = true
+			instruction.Content = string(data)
+		} else {
+			instruction.Truncated = true
+			instruction.Content = string(data[:maxInlineBytes])
+		}
+		out = append(out, instruction)
 	}
 	return out
 }

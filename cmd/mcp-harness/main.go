@@ -33,8 +33,18 @@ type historyShowArgs struct {
 	EventID string `json:"event_id" jsonschema:"history event id"`
 }
 
+type historyRestorePreviewArgs struct {
+	VersionID string `json:"version_id" jsonschema:"workspace version id to preview"`
+}
+
 func main() {
-	runtime := harness.NewRuntime()
+	server := newServer(harness.NewRuntime())
+	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func newServer(runtime *harness.Runtime) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "mcp-harness", Version: "0.1.0"}, nil)
 	mcp.AddTool(
 		server,
@@ -54,9 +64,7 @@ func main() {
 		},
 	)
 	registerDirectTools(server)
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		log.Fatal(err)
-	}
+	return server
 }
 
 func registerDirectTools(server *mcp.Server) {
@@ -135,6 +143,21 @@ func registerDirectTools(server *mcp.Server) {
 		func(ctx context.Context, req *mcp.CallToolRequest, args historyShowArgs) (*mcp.CallToolResult, any, error) {
 			event, err := harness.GetHistoryEvent(args.EventID)
 			return nil, map[string]any{"event": event}, err
+		},
+	)
+	mcp.AddTool(
+		server,
+		&mcp.Tool{
+			Name:        "history_restore_preview",
+			Description: "Preview the diff that would be applied by restoring a recorded workspace version. This does not modify files.",
+		},
+		func(ctx context.Context, req *mcp.CallToolRequest, args historyRestorePreviewArgs) (*mcp.CallToolResult, any, error) {
+			version, err := harness.LoadWorkspaceVersion(args.VersionID)
+			if err != nil {
+				return nil, nil, err
+			}
+			preview, diff, truncated, err := harness.PreviewRestoreWorkspaceVersion(version.WorkspaceRoot, args.VersionID)
+			return nil, map[string]any{"version": preview, "diff": diff, "diff_truncated": truncated}, err
 		},
 	)
 }

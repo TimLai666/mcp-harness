@@ -55,6 +55,11 @@ referenced_files:
     complete: true
     content: "..."
 
+project_instructions:
+  - path: "AGENTS.md"
+    complete: true
+    content: "..."
+
 observations:
   - call_id: ...
     status: ok | error
@@ -229,7 +234,9 @@ Expected built-in namespaces:
 
 External MCP tools must stay namespaced. If two tools have similar names, use the exact namespace from `available_toolsets`.
 
-MCP server configuration is hot-reloaded. Use `mcp.list` to see current servers. After `mcp.add`, `mcp.remove`, or an external edit to `mcps.json`, the next MCP tool call should use the updated configuration.
+MCP server configuration is hot-reloaded from the harness store. Use `mcp.list` to see current servers. After `mcp.add`, `mcp.remove`, or Web/API configuration changes, the next MCP tool call should use the updated configuration.
+
+`mcp.call` validates the target external MCP tool before calling it. If the server's `inputSchema` rejects your `arguments`, correct the arguments and call again. If the tool is not listed by the external server, do not guess a replacement name.
 
 ## History And Restore
 

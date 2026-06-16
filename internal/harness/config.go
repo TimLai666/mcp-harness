@@ -87,6 +87,14 @@ func HistoryVersionsDir() (string, error) {
 	return ensureDir(filepath.Join(base, "versions"))
 }
 
+func HistoryBlobsDir() (string, error) {
+	base, err := HistoryDir()
+	if err != nil {
+		return "", err
+	}
+	return ensureDir(filepath.Join(base, "blobs"))
+}
+
 func RepoRoot() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {

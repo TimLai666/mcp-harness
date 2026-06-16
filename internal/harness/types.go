@@ -189,6 +189,16 @@ type ReferencedFile struct {
 	Error    string `json:"error,omitempty"`
 }
 
+type ProjectInstruction struct {
+	Path      string `json:"path"`
+	Type      string `json:"type"`
+	Content   string `json:"content,omitempty"`
+	Complete  bool   `json:"complete"`
+	Truncated bool   `json:"truncated,omitempty"`
+	Size      int64  `json:"size,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 type RunRequest struct {
 	Message    string     `json:"message"`
 	Project    string     `json:"project,omitempty"`
@@ -198,16 +208,17 @@ type RunRequest struct {
 }
 
 type RunResponse struct {
-	SessionID       string           `json:"session_id"`
-	Status          string           `json:"status"`
-	Mode            Mode             `json:"mode"`
-	AccessMode      AccessMode       `json:"access_mode"`
-	Project         *Project         `json:"project,omitempty"`
-	WorkspaceRoot   string           `json:"workspace_root"`
-	SystemPrompt    string           `json:"system_prompt"`
-	ActiveSkills    []string         `json:"active_skills,omitempty"`
-	ReferencedFiles []ReferencedFile `json:"referenced_files"`
-	Observations    []Observation    `json:"observations"`
-	HistoryEvents   []HistoryEvent   `json:"history_events,omitempty"`
-	Error           string           `json:"error,omitempty"`
+	SessionID       string               `json:"session_id"`
+	Status          string               `json:"status"`
+	Mode            Mode                 `json:"mode"`
+	AccessMode      AccessMode           `json:"access_mode"`
+	Project         *Project             `json:"project,omitempty"`
+	WorkspaceRoot   string               `json:"workspace_root"`
+	SystemPrompt    string               `json:"system_prompt"`
+	ActiveSkills    []string             `json:"active_skills,omitempty"`
+	ReferencedFiles []ReferencedFile     `json:"referenced_files"`
+	Instructions    []ProjectInstruction `json:"project_instructions,omitempty"`
+	Observations    []Observation        `json:"observations"`
+	HistoryEvents   []HistoryEvent       `json:"history_events,omitempty"`
+	Error           string               `json:"error,omitempty"`
 }
