@@ -127,7 +127,7 @@ Harness 不會：
 
 ### MCP Server
 
-本專案預計只提供一個 MCP Server。第一版至少暴露一個主要工具：
+本專案預計只提供一個 MCP Server。這個 server 會暴露少量 ChatGPT 可直接呼叫的 MCP tools；真正會操作本機工作區的入口仍是 `harness`。
 
 ```json
 {
@@ -143,7 +143,17 @@ Harness 不會：
 }
 ```
 
-設計重點是讓外部 agent 只需要知道一個 MCP 工具，但工具內部可以再透過 harness tool call 操作多個本機 toolsets。
+目前 direct MCP tools：
+
+- `harness`：唯一會執行本機工作流的入口。支援 project、mode、access mode、session、內部 harness tool calls。
+- `project_list`：列出已設定專案。
+- `skill_list`：列出可用 skills metadata。
+- `mcp_list`：列出已設定外接 MCP servers，不 probe、不呼叫外部 server。
+- `approval_list`：列出 approval records，不能 approve/reject。
+- `history_list`：列出 tool-call history events。
+- `history_show`：查看單一 history event 與 diff。
+
+分層原則：查詢型、控制台型能力可以提升成 direct MCP tools；會改檔、跑 shell、restore version、修改 MCP 設定、或可能碰到外部 server 的能力，先留在 `harness` 內部 toolsets，讓它們走 mode、approval、history/diff 的完整流程。
 
 ### Prompt 合成
 

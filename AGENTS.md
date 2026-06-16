@@ -4,7 +4,7 @@
 
 ## 專案定位
 
-`mcp-harness` 要做的是一個本機 MCP Server，讓 ChatGPT、Claude 或其他外部遠端 agent 透過單一 `harness()` 工具操作本機專案。
+`mcp-harness` 要做的是一個本機 MCP Server，讓 ChatGPT、Claude 或其他外部遠端 agent 操作本機專案。`harness()` 是唯一會執行本機工作流的 direct MCP tool；其他 direct MCP tools 只提供查詢與控制台狀態。
 
 核心邊界：
 
@@ -13,6 +13,7 @@
 - 每個 harness tool call 都要記錄 history 與 step-level diff；即使檔案是被 `terminal.run` 改到，也要由前後 snapshot 算出 diff。
 - Harness 本身不內建模型。
 - Web UI 是控制台，用來管理 projects、sessions、toolsets、skills、approvals，不是行銷頁。
+- Direct MCP tools 可以暴露查詢型能力，例如 projects、skills、MCP server list、approvals list、history list/show；會改檔、跑 shell、restore version、修改 MCP 設定、或呼叫外部 MCP server 的能力要留在 `harness()` 內，走 mode、approval、history/diff。
 
 ## 目前檔案
 
