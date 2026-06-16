@@ -38,9 +38,11 @@ func DefaultSkillRoots() []string {
 	if root, err := RepoRoot(); err == nil {
 		roots = append(roots, filepath.Join(root, "skills"))
 	}
+	if appDir, err := AppDir(); err == nil {
+		roots = append(roots, filepath.Join(appDir, "skills"))
+	}
 	if home, err := os.UserHomeDir(); err == nil {
 		roots = append(roots,
-			filepath.Join(home, ".mcp-harness", "skills"),
 			filepath.Join(home, ".agents", "skills"),
 			filepath.Join(home, ".claude", "skills"),
 		)

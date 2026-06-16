@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本 repo 目前已有 Go 版 MVP。工作時先把它當成「MCP harness runtime + Web 控制台」專案，不要把尚未完成的 approval queue、外接 MCP client 或完整資料庫說成已完成。
+本 repo 目前已有 Go 版 MVP。工作時先把它當成「MCP harness runtime + Web 控制台」專案。approval queue、外接 MCP client、tool history/diff/restore 都已有檔案式 MVP；不要把完整資料庫、完整權限政策、完整 schema validation 或 e2e 說成已完成。
 
 ## 專案定位
 
@@ -10,6 +10,7 @@
 
 - 外部 agent 負責推理與規劃。
 - `mcp-harness` 負責本機執行、檔案操作、工具註冊、skills 載入、專案邊界、audit log。
+- 每個 harness tool call 都要記錄 history 與 step-level diff；即使檔案是被 `terminal.run` 改到，也要由前後 snapshot 算出 diff。
 - Harness 本身不內建模型。
 - Web UI 是控制台，用來管理 projects、sessions、toolsets、skills、approvals，不是行銷頁。
 
@@ -23,6 +24,9 @@
 - `cmd/mcp-harness-web`：Web UI 控制台。
 - `internal/harness`：核心 runtime、toolsets、skills、prompt 合成。
 - `internal/web`：Web API 與 HTML 控制台。
+- `MCP_HARNESS_HOME/history`：檔案式 history/version store。
+- `MCP_HARNESS_HOME/approvals`：檔案式 approval queue。
+- `MCP_HARNESS_HOME/mcps.json`：外接 MCP server 設定。
 
 如果新增實作，請同步更新 README 的「目前狀態」與里程碑，不要讓文件宣稱未實作功能已可用。
 
@@ -37,7 +41,7 @@
 - Go 是主要實作語言。
 - MCP server 使用官方 `github.com/modelcontextprotocol/go-sdk`。
 - Web UI 目前使用 Go standard library `net/http`，不要未經確認改成前端框架。
-- 設定與 session MVP 使用 `~/.mcp-harness` 下的 JSON/JSONL 檔。
+- 設定、session、approval、history MVP 使用 `~/.mcp-harness` 下的 JSON/JSONL 檔。
 
 ## 文件原則
 
@@ -46,6 +50,7 @@
 - 不要用 mock 或概念描述包裝成已驗證功能。
 - 修改 prompt 時，要同時考慮 parser 是否能穩定實作。
 - 修改 harness tool call 格式時，要同步更新 README 與 `prompts/main.md`。
+- 修改 access mode、history、MCP、skills hot-reload 行為時，要同步更新 README 與 `prompts/main.md`。
 
 ## Harness Tool Call 設計規則
 

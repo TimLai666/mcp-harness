@@ -9,10 +9,11 @@ import (
 )
 
 type harnessArgs struct {
-	Message   string       `json:"message" jsonschema:"natural language instructions and optional harness tool call blocks"`
-	Project   string       `json:"project,omitempty" jsonschema:"optional project id, project name, or absolute path"`
-	Mode      harness.Mode `json:"mode,omitempty" jsonschema:"inspect or work"`
-	SessionID string       `json:"session_id,omitempty" jsonschema:"optional existing session id"`
+	Message    string             `json:"message" jsonschema:"natural language instructions and optional harness tool call blocks"`
+	Project    string             `json:"project,omitempty" jsonschema:"optional project id, project name, or absolute path"`
+	Mode       harness.Mode       `json:"mode,omitempty" jsonschema:"inspect or work"`
+	AccessMode harness.AccessMode `json:"access_mode,omitempty" jsonschema:"default, auto, or full_access"`
+	SessionID  string             `json:"session_id,omitempty" jsonschema:"optional existing session id"`
 }
 
 func main() {
@@ -26,10 +27,11 @@ func main() {
 		},
 		func(ctx context.Context, req *mcp.CallToolRequest, args harnessArgs) (*mcp.CallToolResult, any, error) {
 			result, err := runtime.Run(ctx, harness.RunRequest{
-				Message:   args.Message,
-				Project:   args.Project,
-				Mode:      args.Mode,
-				SessionID: args.SessionID,
+				Message:    args.Message,
+				Project:    args.Project,
+				Mode:       args.Mode,
+				AccessMode: args.AccessMode,
+				SessionID:  args.SessionID,
 			})
 			return nil, result, err
 		},

@@ -11,6 +11,7 @@ The external agent does the reasoning. `mcp-harness` does local execution.
 `mcp-harness` may provide:
 
 - selected project or sandbox context
+- current access mode
 - available toolsets and schemas
 - available skill metadata
 - active skill content
@@ -31,6 +32,8 @@ current_project:
   path: ...
   mode: inspect | work
   sandbox_path: ...
+
+access_mode: default | auto | full_access
 
 available_toolsets:
   - name: workspace
@@ -60,6 +63,18 @@ observations:
 ```
 
 If no project is selected, operate in the default sandbox shown by the harness. If neither project nor sandbox is shown, ask for context instead of guessing paths.
+
+## Access Modes
+
+The harness may run with one of these access modes:
+
+- `default`: High-risk operations are queued for Web UI approval.
+- `auto`: You may execute high-risk operations only when the user has clearly authorized the action and you include `user_authorized: true` plus a concise `approval_reason` in the tool args.
+- `full_access`: High-risk operations execute directly.
+
+High-risk operations include file mutation, workspace version restore, MCP server configuration changes, untrusted external MCP calls, and obviously destructive terminal commands.
+
+In `auto`, do not invent authorization. If the user has not clearly granted permission for the specific kind of action, let the operation enter the approval queue or ask for authorization.
 
 ## `@` File References
 
@@ -196,6 +211,7 @@ Skill protocol:
 2. Treat returned skill content as active instructions for the current task.
 3. Load skill resources only when the skill content directs you to.
 4. Do not treat skill metadata as a substitute for full skill content.
+5. Skills are hot-reloaded. If a skill changes during the same session, the next harness turn will inject the updated `SKILL.md` content.
 
 ## Toolsets
 
@@ -209,5 +225,20 @@ Expected built-in namespaces:
 - `project`
 - `skill`
 - `mcp`
+- `history`
 
 External MCP tools must stay namespaced. If two tools have similar names, use the exact namespace from `available_toolsets`.
+
+MCP server configuration is hot-reloaded. Use `mcp.list` to see current servers. After `mcp.add`, `mcp.remove`, or an external edit to `mcps.json`, the next MCP tool call should use the updated configuration.
+
+## History And Restore
+
+Every harness tool call is recorded as a history step with a before version, after version, and diff. This includes file changes made by `terminal.run`.
+
+Use:
+
+- `history.list` to find recent steps. Use `current_project: true` when you only need the current project.
+- `history.show` to inspect one step and its diff.
+- `history.restore` to restore a workspace to a recorded version.
+
+`history.restore` modifies files and follows the same access-mode approval rules as other file mutations.

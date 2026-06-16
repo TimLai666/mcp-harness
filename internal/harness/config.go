@@ -48,6 +48,38 @@ func ProjectsPath() (string, error) {
 	return filepath.Join(base, "projects.json"), nil
 }
 
+func MCPsPath() (string, error) {
+	base, err := AppDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "mcps.json"), nil
+}
+
+func ApprovalsDir() (string, error) {
+	base, err := AppDir()
+	if err != nil {
+		return "", err
+	}
+	return ensureDir(filepath.Join(base, "approvals"))
+}
+
+func HistoryDir() (string, error) {
+	base, err := AppDir()
+	if err != nil {
+		return "", err
+	}
+	return ensureDir(filepath.Join(base, "history"))
+}
+
+func HistoryVersionsDir() (string, error) {
+	base, err := HistoryDir()
+	if err != nil {
+		return "", err
+	}
+	return ensureDir(filepath.Join(base, "versions"))
+}
+
 func RepoRoot() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {

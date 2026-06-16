@@ -3,6 +3,7 @@ package harness
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,17 +11,25 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type ToolsetRegistry struct {
 	workspace Workspace
 	skills    *SkillRegistry
 	projects  ProjectRegistry
+	sessionID string
+	access    AccessMode
+	approval  ApprovalStore
 	handlers  map[string]func(context.Context, map[string]any) (any, error)
 }
 
-func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry) *ToolsetRegistry {
-	r := &ToolsetRegistry{workspace: workspace, skills: skills}
+func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry, sessionID string, access AccessMode) *ToolsetRegistry {
+	if access == "" {
+		access = AccessDefault
+	}
+	r := &ToolsetRegistry{workspace: workspace, skills: skills, sessionID: sessionID, access: access}
 	r.handlers = map[string]func(context.Context, map[string]any) (any, error){
 		"workspace.list_files":  r.workspaceListFiles,
 		"workspace.read_file":   r.workspaceReadFile,
@@ -38,6 +47,11 @@ func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry) *ToolsetRegi
 		"skill.use":             r.skillUse,
 		"mcp.list":              r.mcpList,
 		"mcp.call":              r.mcpCall,
+		"mcp.add":               r.mcpAdd,
+		"mcp.remove":            r.mcpRemove,
+		"history.list":          r.historyList,
+		"history.show":          r.historyShow,
+		"history.restore":       r.historyRestore,
 	}
 	return r
 }
@@ -67,11 +81,58 @@ func (r *ToolsetRegistry) Execute(ctx context.Context, call HarnessCall) (observ
 	if !ok {
 		return Observation{CallID: callID, Tool: call.Tool, Status: "error", Error: "unknown tool"}
 	}
+	if reason := r.approvalReason(call); reason != "" {
+		if r.access == AccessFullAccess {
+			// Continue and execute. The observation records the actual tool result.
+		} else if r.access == AccessAuto && autoApproved(call.Args) {
+			// Continue and execute. The caller supplied an explicit audit reason.
+		} else if approvalID := getString(call.Args, "approval_id", ""); approvalID == "" || !r.approval.IsApproved(approvalID, r.sessionID, call.Tool, call.Args) {
+			record, err := r.approval.Create(r.sessionID, r.workspace, call, reason)
+			if err != nil {
+				return Observation{CallID: callID, Tool: call.Tool, Status: "error", Error: err.Error()}
+			}
+			return Observation{
+				CallID: callID,
+				Tool:   call.Tool,
+				Status: "approval_required",
+				Result: map[string]any{
+					"approval": record,
+					"message":  "Operation queued for Web UI approval. Re-run the same call with approval_id after approval.",
+				},
+			}
+		}
+	}
 	result, err := handler(ctx, call.Args)
 	if err != nil {
 		return Observation{CallID: callID, Tool: call.Tool, Status: "error", Error: err.Error()}
 	}
 	return Observation{CallID: callID, Tool: call.Tool, Status: "ok", Result: result}
+}
+
+func (r *ToolsetRegistry) approvalReason(call HarnessCall) string {
+	switch call.Tool {
+	case "workspace.apply_patch", "workspace.write_file":
+		return "File mutation requires approval."
+	case "history.restore":
+		return "Restoring a workspace version modifies files and requires approval."
+	case "mcp.add", "mcp.remove":
+		return "Changing MCP server configuration requires approval."
+	case "mcp.call":
+		serverID := getString(call.Args, "server", "")
+		config, err := FindMCPServer(serverID)
+		if err != nil || !config.Trusted {
+			return "Calling an untrusted external MCP server requires approval."
+		}
+	case "terminal.run":
+		if looksDestructive(getString(call.Args, "command", "")) {
+			return "Destructive terminal command requires approval."
+		}
+	}
+	return ""
+}
+
+func autoApproved(args map[string]any) bool {
+	return getBool(args, "user_authorized", false) && strings.TrimSpace(getString(args, "approval_reason", "")) != ""
 }
 
 func (r *ToolsetRegistry) workspaceListFiles(ctx context.Context, args map[string]any) (any, error) {
@@ -235,9 +296,6 @@ func (r *ToolsetRegistry) workspaceWriteFile(ctx context.Context, args map[strin
 
 func (r *ToolsetRegistry) terminalRun(ctx context.Context, args map[string]any) (any, error) {
 	command := mustString(args, "command")
-	if looksDestructive(command) && !getBool(args, "allow_destructive", false) {
-		return nil, fmt.Errorf("command appears destructive")
-	}
 	cwd, err := ResolveInside(r.workspace.Root, getString(args, "cwd", "."))
 	if err != nil {
 		return nil, err
@@ -311,11 +369,146 @@ func (r *ToolsetRegistry) skillUse(ctx context.Context, args map[string]any) (an
 }
 
 func (r *ToolsetRegistry) mcpList(ctx context.Context, args map[string]any) (any, error) {
-	return map[string]any{"servers": []any{}, "note": "External MCP registry is reserved for the next implementation phase."}, nil
+	servers, err := LoadMCPServers()
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{"servers": servers}
+	if !getBool(args, "probe", false) {
+		return result, nil
+	}
+	toolsByServer := map[string]any{}
+	for _, server := range servers {
+		tools, err := r.listMCPTools(ctx, server, MCPTimeout(args))
+		if err != nil {
+			toolsByServer[server.ID] = map[string]any{"error": err.Error()}
+			continue
+		}
+		toolsByServer[server.ID] = tools
+	}
+	result["tools"] = toolsByServer
+	return result, nil
 }
 
 func (r *ToolsetRegistry) mcpCall(ctx context.Context, args map[string]any) (any, error) {
-	return nil, fmt.Errorf("external MCP calls are not implemented in this MVP")
+	serverID := mustString(args, "server")
+	tool := mustString(args, "tool")
+	arguments, _ := args["arguments"].(map[string]any)
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
+	config, err := FindMCPServer(serverID)
+	if err != nil {
+		return nil, err
+	}
+	timeout := MCPTimeout(args)
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	transport, err := MCPTransport(config)
+	if err != nil {
+		return nil, err
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-harness", Version: "0.1.0"}, nil)
+	session, err := client.Connect(cctx, transport, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	res, err := session.CallTool(cctx, &mcp.CallToolParams{Name: tool, Arguments: arguments})
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func (r *ToolsetRegistry) mcpAdd(ctx context.Context, args map[string]any) (any, error) {
+	config := MCPServerConfig{
+		ID:        mustString(args, "id"),
+		Name:      getString(args, "name", mustString(args, "id")),
+		Transport: getString(args, "transport", "stdio"),
+		Command:   getString(args, "command", ""),
+		Endpoint:  getString(args, "endpoint", ""),
+		Trusted:   getBool(args, "trusted", false),
+	}
+	if rawArgs, ok := args["args"].([]any); ok {
+		for _, arg := range rawArgs {
+			config.Args = append(config.Args, fmt.Sprint(arg))
+		}
+	}
+	if env, ok := args["env"].(map[string]any); ok {
+		config.Env = map[string]string{}
+		for key, value := range env {
+			config.Env[key] = fmt.Sprint(value)
+		}
+	}
+	if err := AddMCPServer(config); err != nil {
+		return nil, err
+	}
+	return map[string]any{"server": config}, nil
+}
+
+func (r *ToolsetRegistry) mcpRemove(ctx context.Context, args map[string]any) (any, error) {
+	id := mustString(args, "id")
+	if err := DeleteMCPServer(id); err != nil {
+		return nil, err
+	}
+	return map[string]any{"removed": id}, nil
+}
+
+func (r *ToolsetRegistry) historyList(ctx context.Context, args map[string]any) (any, error) {
+	projectID := getString(args, "project_id", "")
+	if projectID == "" && getBool(args, "current_project", false) && r.workspace.Project != nil {
+		projectID = r.workspace.Project.ID
+	}
+	events, err := ListHistoryEvents(projectID, getString(args, "session_id", ""), getInt(args, "limit", 50), getBool(args, "include_diff", false))
+	return map[string]any{"events": events}, err
+}
+
+func (r *ToolsetRegistry) historyShow(ctx context.Context, args map[string]any) (any, error) {
+	event, err := GetHistoryEvent(mustString(args, "event_id"))
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"event": event}, nil
+}
+
+func (r *ToolsetRegistry) historyRestore(ctx context.Context, args map[string]any) (any, error) {
+	if r.workspace.Mode != ModeWork {
+		return nil, fmt.Errorf("history.restore requires mode=work")
+	}
+	version, diff, truncated, err := RestoreWorkspaceVersion(r.workspace.Root, mustString(args, "version_id"))
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"restored_version": version.ID, "label": version.Label, "diff": diff, "diff_truncated": truncated}, nil
+}
+
+func (r *ToolsetRegistry) listMCPTools(ctx context.Context, config MCPServerConfig, timeout time.Duration) (any, error) {
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	transport, err := MCPTransport(config)
+	if err != nil {
+		return nil, err
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-harness", Version: "0.1.0"}, nil)
+	session, err := client.Connect(cctx, transport, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	res, err := session.ListTools(cctx, &mcp.ListToolsParams{})
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(res.Tools)
+	if err != nil {
+		return res.Tools, nil
+	}
+	var tools []map[string]any
+	if err := json.Unmarshal(data, &tools); err != nil {
+		return res.Tools, nil
+	}
+	return tools, nil
 }
 
 func (r *ToolsetRegistry) git(ctx context.Context, args []string) (any, error) {

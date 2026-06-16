@@ -7,17 +7,32 @@ import (
 
 func ComposeSystemPrompt(
 	workspace Workspace,
+	accessMode AccessMode,
 	catalog map[string][]map[string]any,
 	skills *SkillRegistry,
 	references []ReferencedFile,
 	observations []Observation,
+	activeSkillNames []string,
 ) string {
+	activeSkills := []map[string]any{}
+	for _, name := range activeSkillNames {
+		skill, err := skills.Get(name)
+		if err != nil {
+			continue
+		}
+		activeSkills = append(activeSkills, map[string]any{
+			"name":    skill.Name,
+			"content": skill.content,
+		})
+	}
 	context := map[string]any{
 		"current_project":    workspace.Project,
 		"sandbox_path":       workspace.SandboxPath,
 		"mode":               workspace.Mode,
+		"access_mode":        accessMode,
 		"available_toolsets": catalog,
 		"available_skills":   skills.List(),
+		"active_skills":      activeSkills,
 		"referenced_files":   references,
 		"observations":       observations,
 	}
