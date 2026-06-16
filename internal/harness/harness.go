@@ -2,9 +2,6 @@ package harness
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -91,27 +88,11 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (RunResponse, error) 
 }
 
 func recordSession(sessionID string, req RunRequest, res RunResponse) error {
-	dir, err := SessionsDir()
+	store, err := DefaultStore()
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, sessionID+".jsonl")
 	compact := res
 	compact.SystemPrompt = ""
-	event := map[string]any{
-		"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
-		"request":   req,
-		"response":  compact,
-	}
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	_, err = file.Write(append(data, '\n'))
-	return err
+	return store.RecordTurn(sessionID, req, compact)
 }

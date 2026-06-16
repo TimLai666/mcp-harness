@@ -3,7 +3,6 @@ package harness
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -167,104 +166,43 @@ func SaveWorkspaceVersion(sessionID string, workspace Workspace, step int, tool,
 		version.ProjectID = workspace.Project.ID
 		version.ProjectName = workspace.Project.Name
 	}
-	dir, err := HistoryVersionsDir()
+	store, err := DefaultStore()
 	if err != nil {
 		return WorkspaceVersion{}, err
 	}
-	data, err := json.MarshalIndent(version, "", "  ")
-	if err != nil {
-		return WorkspaceVersion{}, err
-	}
-	if err := os.WriteFile(filepath.Join(dir, version.ID+".json"), append(data, '\n'), 0o600); err != nil {
-		return WorkspaceVersion{}, err
-	}
-	return version, nil
+	return version, store.SaveWorkspaceVersion(version)
 }
 
 func AppendHistoryEvent(event HistoryEvent) error {
-	dir, err := HistoryDir()
+	store, err := DefaultStore()
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	file, err := os.OpenFile(filepath.Join(dir, "events.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	_, err = file.Write(append(data, '\n'))
-	return err
+	return store.AppendHistoryEvent(event)
 }
 
 func ListHistoryEvents(projectID, sessionID string, limit int, includeDiff bool) ([]HistoryEvent, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	dir, err := HistoryDir()
+	store, err := DefaultStore()
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	out := []HistoryEvent{}
-	for i := len(lines) - 1; i >= 0 && len(out) < limit; i-- {
-		if strings.TrimSpace(lines[i]) == "" {
-			continue
-		}
-		var event HistoryEvent
-		if err := json.Unmarshal([]byte(lines[i]), &event); err != nil {
-			continue
-		}
-		if projectID != "" && event.ProjectID != projectID {
-			continue
-		}
-		if sessionID != "" && event.SessionID != sessionID {
-			continue
-		}
-		if !includeDiff {
-			event.Diff = ""
-		}
-		out = append(out, event)
-	}
-	return out, nil
+	return store.ListHistoryEvents(projectID, sessionID, limit, includeDiff)
 }
 
 func GetHistoryEvent(id string) (HistoryEvent, error) {
-	events, err := ListHistoryEvents("", "", 100000, true)
+	store, err := DefaultStore()
 	if err != nil {
 		return HistoryEvent{}, err
 	}
-	for _, event := range events {
-		if event.ID == id {
-			return event, nil
-		}
-	}
-	return HistoryEvent{}, errors.New("history event not found: " + id)
+	return store.GetHistoryEvent(id)
 }
 
 func LoadWorkspaceVersion(id string) (WorkspaceVersion, error) {
-	dir, err := HistoryVersionsDir()
+	store, err := DefaultStore()
 	if err != nil {
 		return WorkspaceVersion{}, err
 	}
-	data, err := os.ReadFile(filepath.Join(dir, id+".json"))
-	if err != nil {
-		return WorkspaceVersion{}, err
-	}
-	var version WorkspaceVersion
-	if err := json.Unmarshal(data, &version); err != nil {
-		return WorkspaceVersion{}, err
-	}
-	return version, nil
+	return store.LoadWorkspaceVersion(id)
 }
 
 func RestoreWorkspaceVersion(root, versionID string) (WorkspaceVersion, string, bool, error) {
@@ -287,6 +225,22 @@ func RestoreWorkspaceVersion(root, versionID string) (WorkspaceVersion, string, 
 		return WorkspaceVersion{}, "", false, err
 	}
 	diff, truncated := DiffSnapshots(before, after)
+	return version, diff, truncated, nil
+}
+
+func PreviewRestoreWorkspaceVersion(root, versionID string) (WorkspaceVersion, string, bool, error) {
+	version, err := LoadWorkspaceVersion(versionID)
+	if err != nil {
+		return WorkspaceVersion{}, "", false, err
+	}
+	if filepath.Clean(version.WorkspaceRoot) != filepath.Clean(root) {
+		return WorkspaceVersion{}, "", false, errors.New("version belongs to a different workspace")
+	}
+	current, err := CaptureWorkspaceSnapshot(root)
+	if err != nil {
+		return WorkspaceVersion{}, "", false, err
+	}
+	diff, truncated := DiffSnapshots(current, version.Snapshot)
 	return version, diff, truncated, nil
 }
 

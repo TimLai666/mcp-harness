@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -16,34 +15,19 @@ type mcpConfigFile struct {
 }
 
 func LoadMCPServers() ([]MCPServerConfig, error) {
-	path, err := MCPsPath()
+	store, err := DefaultStore()
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var payload mcpConfigFile
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
-	}
-	return payload.Servers, nil
+	return store.ListMCPServers()
 }
 
 func SaveMCPServers(servers []MCPServerConfig) error {
-	path, err := MCPsPath()
+	store, err := DefaultStore()
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(mcpConfigFile{Servers: servers}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	return store.SaveMCPServers(servers)
 }
 
 func AddMCPServer(config MCPServerConfig) error {

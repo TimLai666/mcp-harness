@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -46,6 +45,14 @@ func ProjectsPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(base, "projects.json"), nil
+}
+
+func DBPath() (string, error) {
+	base, err := AppDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "harness.db"), nil
 }
 
 func MCPsPath() (string, error) {
@@ -98,43 +105,32 @@ func RepoRoot() (string, error) {
 }
 
 func LoadProjects() ([]Project, error) {
-	path, err := ProjectsPath()
+	store, err := DefaultStore()
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
+	projects, err := store.ListProjects()
 	if err != nil {
 		return nil, err
 	}
-	var payload projectsFile
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
-	}
-	for i := range payload.Projects {
-		abs, err := filepath.Abs(payload.Projects[i].Path)
+	for i := range projects {
+		abs, err := filepath.Abs(projects[i].Path)
 		if err == nil {
-			payload.Projects[i].Path = abs
+			projects[i].Path = abs
 		}
-		if payload.Projects[i].DefaultMode == "" {
-			payload.Projects[i].DefaultMode = ModeInspect
+		if projects[i].DefaultMode == "" {
+			projects[i].DefaultMode = ModeInspect
 		}
 	}
-	return payload.Projects, nil
+	return projects, nil
 }
 
 func SaveProjects(projects []Project) error {
-	path, err := ProjectsPath()
+	store, err := DefaultStore()
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(projectsFile{Projects: projects}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	return store.SaveProjects(projects)
 }
 
 func ReadPrompt(name string) string {

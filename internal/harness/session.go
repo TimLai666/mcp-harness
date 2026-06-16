@@ -1,44 +1,19 @@
 package harness
 
-import (
-	"encoding/json"
-	"errors"
-	"os"
-	"path/filepath"
-)
-
 func LoadSessionState(sessionID string) SessionState {
-	state := SessionState{ID: sessionID}
-	path, err := sessionStatePath(sessionID)
+	store, err := DefaultStore()
 	if err != nil {
-		return state
-	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return state
-	}
-	if err != nil {
-		return state
-	}
-	if err := json.Unmarshal(data, &state); err != nil {
 		return SessionState{ID: sessionID}
 	}
-	if state.ID == "" {
-		state.ID = sessionID
-	}
-	return state
+	return store.LoadSessionState(sessionID)
 }
 
 func SaveSessionState(state SessionState) error {
-	path, err := sessionStatePath(state.ID)
+	store, err := DefaultStore()
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	return store.SaveSessionState(state)
 }
 
 func AddActiveSkill(state *SessionState, name string) {
@@ -49,12 +24,4 @@ func AddActiveSkill(state *SessionState, name string) {
 		}
 	}
 	state.ActiveSkills = append(state.ActiveSkills, name)
-}
-
-func sessionStatePath(sessionID string) (string, error) {
-	dir, err := SessionsDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, sessionID+".state.json"), nil
 }

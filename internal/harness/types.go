@@ -99,6 +99,40 @@ type SessionState struct {
 	ActiveSkills []string `json:"active_skills"`
 }
 
+type SessionRecord struct {
+	ID            string     `json:"id"`
+	CreatedAt     string     `json:"created_at"`
+	UpdatedAt     string     `json:"updated_at"`
+	ProjectID     string     `json:"project_id,omitempty"`
+	ProjectName   string     `json:"project_name,omitempty"`
+	WorkspaceRoot string     `json:"workspace_root"`
+	Mode          Mode       `json:"mode"`
+	AccessMode    AccessMode `json:"access_mode"`
+	ActiveSkills  []string   `json:"active_skills,omitempty"`
+	TurnCount     int        `json:"turn_count,omitempty"`
+}
+
+type TurnRecord struct {
+	ID        string      `json:"id"`
+	SessionID string      `json:"session_id"`
+	Timestamp string      `json:"timestamp"`
+	Status    string      `json:"status"`
+	Request   RunRequest  `json:"request"`
+	Response  RunResponse `json:"response"`
+}
+
+type ToolCallRecord struct {
+	ID        string         `json:"id"`
+	SessionID string         `json:"session_id"`
+	TurnID    string         `json:"turn_id"`
+	Index     int            `json:"index"`
+	Tool      string         `json:"tool"`
+	Status    string         `json:"status"`
+	Args      map[string]any `json:"args,omitempty"`
+	Result    any            `json:"result,omitempty"`
+	Error     string         `json:"error,omitempty"`
+}
+
 type SnapshotFile struct {
 	Type    string `json:"type"`
 	Size    int64  `json:"size"`

@@ -4,10 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -35,25 +32,11 @@ func (ApprovalStore) Create(sessionID string, workspace Workspace, call HarnessC
 }
 
 func (ApprovalStore) List() ([]ApprovalRecord, error) {
-	dir, err := ApprovalsDir()
+	store, err := DefaultStore()
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var records []ApprovalRecord
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		record, err := LoadApproval(entry.Name()[:len(entry.Name())-len(".json")])
-		if err == nil {
-			records = append(records, record)
-		}
-	}
-	return records, nil
+	return store.ListApprovals()
 }
 
 func (ApprovalStore) SetStatus(id string, status ApprovalStatus) (ApprovalRecord, error) {
@@ -83,39 +66,19 @@ func (ApprovalStore) IsApproved(id, sessionID, tool string, args map[string]any)
 }
 
 func SaveApproval(record ApprovalRecord) error {
-	path, err := approvalPath(record.ID)
+	store, err := DefaultStore()
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	return store.SaveApproval(record)
 }
 
 func LoadApproval(id string) (ApprovalRecord, error) {
-	path, err := approvalPath(id)
+	store, err := DefaultStore()
 	if err != nil {
 		return ApprovalRecord{}, err
 	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return ApprovalRecord{}, fmt.Errorf("approval not found: %s", id)
-	}
-	if err != nil {
-		return ApprovalRecord{}, err
-	}
-	var record ApprovalRecord
-	return record, json.Unmarshal(data, &record)
-}
-
-func approvalPath(id string) (string, error) {
-	dir, err := ApprovalsDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, id+".json"), nil
+	return store.LoadApproval(id)
 }
 
 func approvalID(sessionID string, call HarnessCall) string {
