@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本 repo 目前在規格與 prompt 草案階段。工作時先把它當成「MCP harness 產品規格 + runtime prompt」專案，不要假設已經有可執行 server。
+本 repo 目前已有 Go 版 MVP。工作時先把它當成「MCP harness runtime + Web 控制台」專案，不要把尚未完成的 approval queue、外接 MCP client 或完整資料庫說成已完成。
 
 ## 專案定位
 
@@ -19,6 +19,10 @@
 - `prompts/main.md`：外部 agent 透過 harness 工作時的 runtime prompt。
 - `prompts/rules.md`：使用者通用工作規則。
 - `AGENTS.md`：本 repo 的協作與維護規則。
+- `cmd/mcp-harness`：MCP stdio server。
+- `cmd/mcp-harness-web`：Web UI 控制台。
+- `internal/harness`：核心 runtime、toolsets、skills、prompt 合成。
+- `internal/web`：Web API 與 HTML 控制台。
 
 如果新增實作，請同步更新 README 的「目前狀態」與里程碑，不要讓文件宣稱未實作功能已可用。
 
@@ -27,6 +31,13 @@
 預設使用台灣繁體中文。避免中國用語與翻譯腔。
 
 程式碼、工具名稱、schema 欄位、MCP 名稱、harness tool call keyword 保持英文。
+
+## 技術棧
+
+- Go 是主要實作語言。
+- MCP server 使用官方 `github.com/modelcontextprotocol/go-sdk`。
+- Web UI 目前使用 Go standard library `net/http`，不要未經確認改成前端框架。
+- 設定與 session MVP 使用 `~/.mcp-harness` 下的 JSON/JSONL 檔。
 
 ## 文件原則
 
@@ -74,7 +85,7 @@
 
 - 先讀現有檔案，再修改。
 - 小步改動，保留清楚 diff。
-- 不新增依賴、不選框架、不定資料模型，除非使用者確認。
+- 不新增依賴、不選框架、不改資料儲存方式，除非使用者確認或 README 已列為下一階段。
 - 不做 destructive git 或檔案操作。
 - 若要新增 MCP Server、Web UI、資料庫或 Docker 實作，先提出短計畫與取捨。
 
@@ -87,3 +98,12 @@
 - 用 `git diff --check` 檢查空白問題。
 
 程式實作後才加入對應測試、lint、build 或 MCP client smoke test。
+
+目前至少要跑：
+
+```powershell
+gofmt -w cmd internal
+go test ./...
+go build ./cmd/mcp-harness
+go build ./cmd/mcp-harness-web
+```

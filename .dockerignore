@@ -1,0 +1,6 @@
+.git
+.mcp-harness
+bin
+dist
+coverage.out
+*.exe

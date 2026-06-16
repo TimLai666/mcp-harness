@@ -1,0 +1,16 @@
+services:
+  web:
+    build: .
+    command: ["/app/mcp-harness-web"]
+    ports:
+      - "8765:8765"
+    environment:
+      MCP_HARNESS_HOME: /data
+      MCP_HARNESS_WEB_ADDR: :8765
+    volumes:
+      - mcp-harness-data:/data
+      # Mount project folders explicitly, then add them in the Web UI.
+      # - C:/Users/tingz/Documents/GitHub:/workspace/GitHub
+
+volumes:
+  mcp-harness-data:

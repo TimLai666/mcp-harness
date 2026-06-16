@@ -12,24 +12,82 @@
 
 ## 目前狀態
 
-這個 repo 目前是規格與 prompt 草案階段。
+這個 repo 目前已有 Go 版 MVP。
 
 已完成：
 
-- `prompts/main.md`：harness runtime system prompt 草案
+- `cmd/mcp-harness`：MCP stdio server，暴露 `harness` tool
+- `cmd/mcp-harness-web`：Web UI 控制台
+- `internal/harness`：prompt 合成、專案解析、沙盒、tool call parser、`@檔案` references、skills loader、基礎 toolsets
+- `prompts/main.md`：harness protocol prompt
 - `prompts/rules.md`：通用工作規則
 - `AGENTS.md`：本 repo 的開發與文件維護規則
+- `Dockerfile`、`docker-compose.yml`：Web 控制台部署骨架
 
 尚未完成：
 
-- MCP Server 實作
-- Web UI 控制台
-- toolsets runtime
-- skills loader
 - 專案資料庫與權限設定
-- Docker 部署檔
+- 外接 MCP toolset 的實際 client 連線
+- approval queue
+- session diff 視覺化
+- 完整 e2e 測試
 
-因此目前 README 不是「可安裝使用」文件，而是產品與實作規格的第一版。
+目前已可本機啟動與測試，但仍是 MVP，不是完整安全產品。
+
+## Quickstart
+
+需求：
+
+- Go 1.23 以上
+- Git
+
+跑測試：
+
+```powershell
+go test ./...
+```
+
+啟動 MCP stdio server：
+
+```powershell
+go run ./cmd/mcp-harness
+```
+
+啟動 Web UI：
+
+```powershell
+go run ./cmd/mcp-harness-web
+```
+
+然後打開：
+
+```text
+http://127.0.0.1:8765
+```
+
+Docker 啟動 Web UI：
+
+```powershell
+docker compose up --build
+```
+
+設定資料預設放在：
+
+```text
+~/.mcp-harness
+```
+
+可用環境變數改位置：
+
+```powershell
+$env:MCP_HARNESS_HOME="C:\path\to\data"
+```
+
+Web 監聽位址可用環境變數調整：
+
+```powershell
+$env:MCP_HARNESS_WEB_ADDR="127.0.0.1:8765"
+```
 
 ## 核心概念
 
@@ -74,15 +132,12 @@ Harness 不會：
 
 ### Prompt 合成
 
-目前 repo 尚未實作 prompt 合成邏輯，只有 prompt 檔案草案。
-
-建議實作時採單向合成，不在多份 prompt 重複同一件事：
+目前已實作單向合成，不在多份 prompt 重複同一件事：
 
 1. `prompts/rules.md`：通用行為規則，例如確認、驗證、回報格式、語言風格。
 2. `prompts/main.md`：harness 專屬協議，例如 context 注入、`@檔案`、tool call 格式、toolsets、skills。
-3. project instructions：目前 project 的 AGENTS/CLAUDE/README 類規範。
-4. skills：只注入 metadata，命中後才注入完整 `SKILL.md`。
-5. runtime context：project、sandbox、tool schemas、referenced files、observations。
+3. skills：只注入 metadata，`skill.use` 才回完整 `SKILL.md`。
+4. runtime context：project、sandbox、tool catalog、referenced files、observations。
 
 合成順序建議：
 
@@ -90,13 +145,13 @@ Harness 不會：
 system:
   rules.md
   main.md
-  project instructions
-  active skill contents
   harness runtime context
 
 user:
   original user message
 ```
+
+project instructions 尚未實作掃描。下一步應補 AGENTS/CLAUDE/README 類專案規範注入。
 
 若兩份 prompt 需要講到同一主題，保留一個權威來源，另一份只用一句話指向來源。例如 `main.md` 只說「通用行為由 rules prompt 提供」，不要再重寫驗證、回報格式或工作模式。
 
@@ -124,7 +179,7 @@ Toolset 是工具集合。內建 toolsets 建議先做：
 - `git`：status、diff、log、show、branch 等非破壞性操作
 - `project`：列出專案、切換專案、讀取專案資訊
 - `skill`：列 skills、讀 SKILL.md、載入 skill
-- `mcp`：列出外接 MCP、呼叫外接 MCP tool
+- `mcp`：目前只有 placeholder，外接 MCP client 尚未實作
 
 外接 MCP 的概念參考 [`TimLai666/agent` 的 `tim` 分支](https://github.com/TimLai666/agent/tree/tim)：內建 MCP、新增的本機 MCP、遠端 MCP 都應該被 namespaced，避免工具名稱互撞。
 
@@ -287,7 +342,18 @@ Parser 應只接受下列格式：
 
 ## Web UI 控制台
 
-Web UI 的定位是控制台，不是聊天玩具。它要像 Codex App 一樣能管理多個工作區，但第一畫面應以操作效率為主。
+Web UI 的定位是控制台，不是聊天玩具。MVP 已提供：
+
+- 專案列表
+- 新增專案
+- 選 project/sandbox
+- 選 inspect/work mode
+- 呼叫 harness
+- 顯示 JSON 結果
+
+它還不是最終 UI，但已可用來測 harness 流程。
+
+後續完整控制台要像 Codex App 一樣能管理多個工作區，但第一畫面應以操作效率為主。
 
 第一版建議頁面：
 
@@ -323,23 +389,22 @@ UI 風格建議：
 
 第一版可以先不做完整權限模型，但不能把「全機無限制操作」當成預設。
 
-## 預計部署
+## 部署
 
-預計使用 Docker 部署：
+目前已提供 Dockerfile 與 Compose：
 
 ```text
-docker-compose.yml
-  mcp-harness-server
-  web-ui
-  database
+docker compose up --build
 ```
 
-本機檔案操作需要 mount 專案目錄或使用 host agent。這裡有兩種方向：
+Web UI 會在 container 內看見 `/data`。如果要讓 container 操作本機 repo，需要明確 mount 專案目錄：
 
-- Docker 直接 mount 指定 projects root。簡單，但權限和路徑映射要小心。
-- Server 跑在 host，Web UI 跑 Docker。比較貼近本機工具操作，但部署複雜一點。
+```yaml
+volumes:
+  - C:/Users/tingz/Documents/GitHub:/workspace/GitHub
+```
 
-目前建議第一版採「Docker Compose + explicit volume mounts」，因為比較容易重現與文件化。若之後需要操作任意本機路徑，再補 host runner。
+MCP stdio server 通常由 MCP host 直接啟動 binary，比較不適合長駐在 Compose 裡。
 
 ## 建議里程碑
 
@@ -357,12 +422,16 @@ docker-compose.yml
 - 實作 `workspace.read_file`、`workspace.search`、`workspace.apply_patch`
 - 回傳結構化 observation
 
+狀態：已完成 MVP。
+
 ### M3：Toolsets 與 Skills
 
 - 實作 toolset registry
 - 實作 skills loader
 - 支援外接 MCP namespacing
 - 補 tool schema validation
+
+狀態：toolset registry 與 skills loader 已完成 MVP；外接 MCP 與完整 schema validation 尚未完成。
 
 ### M4：Web UI 控制台
 
@@ -372,6 +441,8 @@ docker-compose.yml
 - diff 檢視
 - approvals queue
 
+狀態：已完成可操作 Web UI 骨架；timeline、diff、approvals 尚未完成。
+
 ### M5：Docker 與安全政策
 
 - Docker Compose
@@ -379,6 +450,8 @@ docker-compose.yml
 - 權限設定
 - audit log
 - 基本 e2e 測試
+
+狀態：Docker Compose 與 JSONL session log 已完成；資料庫、approval policy、e2e 尚未完成。
 
 ## 開發原則
 
