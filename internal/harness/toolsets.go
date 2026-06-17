@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -334,10 +336,28 @@ func (r *ToolsetRegistry) terminalRun(ctx context.Context, args map[string]any) 
 	defer cancel()
 	cmd := shellCommand(cctx, command)
 	cmd.Dir = cwd
+	callID := CallIDFromContext(ctx)
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err = cmd.Run()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go r.streamOutput(&wg, stdoutPipe, &stdout, callID, command, "stdout")
+	go r.streamOutput(&wg, stderrPipe, &stderr, callID, command, "stderr")
+	wg.Wait()
+
+	err = cmd.Wait()
 	code := 0
 	if err != nil {
 		code = 1
@@ -353,6 +373,24 @@ func (r *ToolsetRegistry) terminalRun(ctx context.Context, args map[string]any) 
 		"stdout":     tail(stdout.String(), 20000),
 		"stderr":     tail(stderr.String(), 20000),
 	}, nil
+}
+
+// streamOutput copies a command pipe into the result buffer while broadcasting
+// each chunk to subscribers so the Web UI sees terminal output as it happens.
+func (r *ToolsetRegistry) streamOutput(wg *sync.WaitGroup, reader io.Reader, buf *bytes.Buffer, callID, command, stream string) {
+	defer wg.Done()
+	chunk := make([]byte, 4096)
+	for {
+		n, err := reader.Read(chunk)
+		if n > 0 {
+			data := string(chunk[:n])
+			buf.WriteString(data)
+			PublishTerminalOutput(callID, r.sessionID, r.workspace, command, stream, data)
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 func (r *ToolsetRegistry) gitStatus(ctx context.Context, args map[string]any) (any, error) {

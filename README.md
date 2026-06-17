@@ -33,8 +33,9 @@
 - harness-managed workspaces：agent 可透過 `project.create` 建立空工作區，或透過 `project.clone` clone git repo 並註冊成 project；路徑固定在 `MCP_HARNESS_HOME/workspaces`
 - skills 與 MCP 設定在同一 session 內會重新讀取，支援熱插拔
 - SQLite primary store：`MCP_HARNESS_HOME/harness.db`，啟動時自動 migration，首次建立 DB 時匯入 legacy JSON/JSONL
-- project instruction injection：root-level `AGENTS.md`、`CLAUDE.md` 等規範檔會注入 harness context
-- 基本 e2e 測試：direct MCP server、外接 stdio MCP schema validation、Web API smoke
+- project instruction injection：root-level `AGENTS.md`、`CLAUDE.md` 等規範檔會由 `harness` tool 回傳
+- 即時控制台：`terminal_run` 串流 stdout/stderr，Web UI 透過 SSE(`/api/events`)即時顯示終端輸出與 tool/approval/history 動態
+- 基本 e2e 測試：direct MCP server、外接 stdio MCP schema validation、Web API smoke、event broker 與終端串流
 
 尚未完成：
 
@@ -368,6 +369,8 @@ Web UI 的定位是控制台，不是聊天或任務輸入介面。MVP 已提供
 - 顯示 per-project tool history、每一步 diff，並可 restore before/after version
 - restore 前先 preview diff
 - 設定 access policy（`default` / `full_access`），operator 專用，agent 不能改
+- 即時更新：透過 SSE（`/api/events`）推播 tool 生命週期、approval、history 與 `terminal_run` 的逐步輸出，控制台不靠輪詢就會更新
+- Live Terminal 面板：即時顯示 `terminal_run` 的 stdout/stderr
 
 它不提供聊天框，也不直接啟動 agent workflow。遠端 agent 透過 direct MCP tools 執行任務；Web UI 只做控制台與審核，並由 operator 設定 access policy。
 

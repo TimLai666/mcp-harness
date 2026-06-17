@@ -2,9 +2,11 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/TimLai666/mcp-harness/internal/harness"
 	"github.com/TimLai666/mcp-harness/internal/mcpserver"
@@ -26,6 +28,39 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(indexHTML))
+	})
+	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		events, cancel := harness.DefaultBroker().Subscribe()
+		defer cancel()
+		fmt.Fprint(w, ": connected\n\n")
+		flusher.Flush()
+		heartbeat := time.NewTicker(25 * time.Second)
+		defer heartbeat.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case ev := <-events:
+				data, err := json.Marshal(ev)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+			case <-heartbeat.C:
+				fmt.Fprint(w, ": ping\n\n")
+				flusher.Flush()
+			}
+		}
 	})
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
@@ -321,6 +356,11 @@ const indexHTML = `<!doctype html>
     <section>
       <h2>Details</h2>
       <div id="detail" class="card muted">Select a session, tool call, history event, or approval.</div>
+      <h3>Live Terminal <span id="liveDot" class="pill">offline</span></h3>
+      <div class="card">
+        <small id="terminalHeader" class="muted">Waiting for terminal_run output…</small>
+        <pre id="terminal"></pre>
+      </div>
       <h3>Access Policy</h3>
       <div class="card">
         <small class="muted">Operator-controlled. Agents cannot change this.</small>
@@ -506,11 +546,50 @@ const indexHTML = `<!doctype html>
       const data = await res.json();
       if (data.access_mode) document.getElementById('accessMode').value = data.access_mode;
     }
+    let currentCall = '';
+    function appendTerminal(text) {
+      const pre = document.getElementById('terminal');
+      pre.textContent = (pre.textContent + text).slice(-20000);
+      pre.scrollTop = pre.scrollHeight;
+    }
+    function handleEvent(ev) {
+      if (ev.type === 'tool_start' && ev.tool === 'terminal.run') {
+        currentCall = ev.call_id;
+        document.getElementById('terminal').textContent = '';
+        document.getElementById('terminalHeader').textContent = '$ ' + (ev.command || '') + (ev.project_id ? '  (' + ev.project_id + ')' : '');
+      } else if (ev.type === 'terminal_output') {
+        if (ev.call_id !== currentCall) {
+          currentCall = ev.call_id;
+          document.getElementById('terminal').textContent = '';
+          document.getElementById('terminalHeader').textContent = '$ ' + (ev.command || '');
+        }
+        appendTerminal(ev.data || '');
+      } else if (ev.type === 'tool_end') {
+        if (ev.tool === 'terminal.run' && ev.call_id === currentCall) {
+          appendTerminal('\n[exit: ' + (ev.status || '') + (ev.error ? ' ' + ev.error : '') + ']\n');
+        }
+        refreshHistory();
+        if (selectedSession) refreshToolCalls();
+        refreshSessions();
+      } else if (ev.type === 'history') {
+        refreshHistory();
+      } else if (ev.type === 'approval') {
+        refreshApprovals();
+      }
+    }
+    function connectEvents() {
+      const dot = document.getElementById('liveDot');
+      const es = new EventSource('/api/events');
+      es.onopen = () => { dot.textContent = 'live'; dot.className = 'pill ok'; };
+      es.onerror = () => { dot.textContent = 'reconnecting'; dot.className = 'pill bad'; };
+      es.onmessage = (e) => { try { handleEvent(JSON.parse(e.data)); } catch (err) {} };
+    }
     refreshProjects();
     refreshApprovals();
     refreshMCPs();
     refreshSkills();
     refreshAccessMode();
+    connectEvents();
   </script>
 </body>
 </html>`

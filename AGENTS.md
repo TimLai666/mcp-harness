@@ -24,9 +24,11 @@
 - `prompts/rules.md`：使用者通用工作規則。
 - `AGENTS.md`：本 repo 的協作與維護規則。
 - `cmd/mcp-harness`：MCP stdio server。
-- `cmd/mcp-harness-web`：Web UI 控制台。
-- `internal/harness`：核心 runtime、toolsets、skills、prompt 合成。
-- `internal/web`：Web API 與 HTML 控制台。
+- `cmd/mcp-harness-web`：Web UI 控制台與遠端 MCP endpoint。
+- `internal/harness`：核心 runtime、單一工具執行、toolsets、skills、prompt、event broker。
+- `internal/harness/events.go`：in-process event broker，串流 `terminal_run` 輸出與 tool/approval/history 事件給 Web UI。
+- `internal/mcpserver`：direct MCP tool 註冊與名稱轉換(`exec()`)。
+- `internal/web`：Web API、SSE(`/api/events`)、HTML 控制台。
 - `MCP_HARNESS_HOME/harness.db`：SQLite primary store。
 - `MCP_HARNESS_HOME/history/blobs`：workspace version snapshot blob store。
 - `MCP_HARNESS_HOME/mcps.json`：legacy 外接 MCP server 設定匯入來源；DB 建好後以 SQLite 為主。

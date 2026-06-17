@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -61,12 +62,24 @@ func (r *Runtime) ExecuteTool(ctx context.Context, req ToolCallRequest) (ToolCal
 
 	mutates := toolMutates(req.Tool)
 	step := r.nextStep(sessionID)
+	callID := fmt.Sprintf("call-%s-%d-%d", sessionID, step, time.Now().UnixNano())
+	ctx = WithCallID(ctx, callID)
+	publishToolStart(callID, workspace, sessionID, req.Tool, getString(args, "command", ""))
+
 	var beforeSnapshot WorkspaceSnapshot
 	if mutates {
 		beforeSnapshot = captureSnapshotOrTruncated(workspace.Root)
 	}
 
 	observation := registry.Execute(ctx, call)
+	publishToolEnd(callID, workspace, sessionID, req.Tool, observation.Status, observation.Error)
+	if observation.Status == "approval_required" {
+		if resultMap, ok := observation.Result.(map[string]any); ok {
+			if record, ok := resultMap["approval"].(ApprovalRecord); ok {
+				publishApproval(record)
+			}
+		}
+	}
 
 	if req.Tool == "skill.use" && observation.Status == "ok" {
 		if name, ok := args["name"].(string); ok {
@@ -90,6 +103,9 @@ func (r *Runtime) ExecuteTool(ctx context.Context, req ToolCallRequest) (ToolCal
 		event := NewHistoryEvent(sessionID, workspace, step, call, observation, WorkspaceVersion{}, WorkspaceVersion{}, "", false)
 		_ = AppendHistoryEvent(event)
 		historyEvent = &event
+	}
+	if historyEvent != nil {
+		publishHistory(*historyEvent)
 	}
 
 	result := ToolCallResult{
