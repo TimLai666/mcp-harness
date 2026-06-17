@@ -100,7 +100,42 @@ func BuiltinToolSchemas() map[string]ToolSchema {
 		},
 		"project.list":    {Description: "List configured projects."},
 		"project.current": {Description: "Show the current workspace."},
-		"skill.list":      {Description: "List available skills."},
+		"project.add": {
+			Description: "Register an existing directory as a harness project.",
+			Args: map[string]ArgSchema{
+				"path":             {Type: ArgString, Required: true},
+				"name":             {Type: ArgString},
+				"project_id":       {Type: ArgString},
+				"description":      {Type: ArgString},
+				"default_mode":     {Type: ArgString},
+				"allowed_toolsets": {Type: ArgArray},
+			},
+		},
+		"project.create": {
+			Description: "Create a persistent harness-managed workspace and register it as a project.",
+			Args: map[string]ArgSchema{
+				"name":             {Type: ArgString, Required: true},
+				"project_id":       {Type: ArgString},
+				"description":      {Type: ArgString},
+				"default_mode":     {Type: ArgString},
+				"allowed_toolsets": {Type: ArgArray},
+			},
+		},
+		"project.clone": {
+			Description: "Clone a git repository into a persistent harness-managed workspace and register it as a project.",
+			Args: map[string]ArgSchema{
+				"repo_url":         {Type: ArgString, Required: true},
+				"branch":           {Type: ArgString},
+				"name":             {Type: ArgString},
+				"project_id":       {Type: ArgString},
+				"description":      {Type: ArgString},
+				"default_mode":     {Type: ArgString},
+				"allowed_toolsets": {Type: ArgArray},
+				"depth":            {Type: ArgInt},
+				"timeout_ms":       {Type: ArgInt},
+			},
+		},
+		"skill.list": {Description: "List available skills."},
 		"skill.use": {
 			Description: "Load a skill and mark it active for the session.",
 			Args: map[string]ArgSchema{

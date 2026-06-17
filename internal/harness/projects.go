@@ -1,18 +1,31 @@
 package harness
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 var projectIDRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 type ProjectRegistry struct{}
+
+type CloneResult struct {
+	Project    Project `json:"project"`
+	Command    string  `json:"command"`
+	ReturnCode int     `json:"returncode"`
+	Stdout     string  `json:"stdout,omitempty"`
+	Stderr     string  `json:"stderr,omitempty"`
+}
 
 func (ProjectRegistry) List() ([]Project, error) {
 	return LoadProjects()
@@ -67,6 +80,128 @@ func (r ProjectRegistry) AddWithAllowedToolsets(path, name, projectID, descripti
 	return project, SaveProjects(projects)
 }
 
+func (r ProjectRegistry) CreateWorkspace(name, projectID, description string, mode Mode, allowedToolsets []string) (Project, error) {
+	if strings.TrimSpace(name) == "" && strings.TrimSpace(projectID) == "" {
+		return Project{}, fmt.Errorf("workspace name or project_id is required")
+	}
+	if strings.TrimSpace(name) == "" {
+		name = strings.TrimSpace(projectID)
+	}
+	if mode == "" {
+		mode = ModeWork
+	}
+	projects, err := r.List()
+	if err != nil {
+		return Project{}, err
+	}
+	if projectID == "" {
+		projectID = makeProjectID(name, projects)
+	}
+	if err := validateNewProjectID(projectID, projects); err != nil {
+		return Project{}, err
+	}
+	workspaces, err := WorkspacesDir()
+	if err != nil {
+		return Project{}, err
+	}
+	path, err := nextWorkspacePath(workspaces, projectID, projects)
+	if err != nil {
+		return Project{}, err
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return Project{}, err
+	}
+	return r.AddWithAllowedToolsets(path, name, projectID, description, mode, allowedToolsets)
+}
+
+func (r ProjectRegistry) CloneWorkspace(ctx context.Context, repoURL, branch, name, projectID, description string, mode Mode, allowedToolsets []string, depth int, timeout time.Duration) (CloneResult, error) {
+	repoURL = strings.TrimSpace(repoURL)
+	if repoURL == "" {
+		return CloneResult{}, fmt.Errorf("repo_url is required")
+	}
+	if depth < 0 {
+		return CloneResult{}, fmt.Errorf("depth must be >= 0")
+	}
+	if strings.TrimSpace(name) == "" {
+		name = inferProjectNameFromRepoURL(repoURL)
+	}
+	if strings.TrimSpace(name) == "" && strings.TrimSpace(projectID) == "" {
+		return CloneResult{}, fmt.Errorf("project name or project_id is required")
+	}
+	if strings.TrimSpace(name) == "" {
+		name = strings.TrimSpace(projectID)
+	}
+	if mode == "" {
+		mode = ModeWork
+	}
+	projects, err := r.List()
+	if err != nil {
+		return CloneResult{}, err
+	}
+	if projectID == "" {
+		projectID = makeProjectID(name, projects)
+	}
+	if err := validateNewProjectID(projectID, projects); err != nil {
+		return CloneResult{}, err
+	}
+	workspaces, err := WorkspacesDir()
+	if err != nil {
+		return CloneResult{}, err
+	}
+	path, err := nextWorkspacePath(workspaces, projectID, projects)
+	if err != nil {
+		return CloneResult{}, err
+	}
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	args := []string{"clone"}
+	if branch = strings.TrimSpace(branch); branch != "" {
+		args = append(args, "--branch", branch)
+	}
+	if depth > 0 {
+		args = append(args, "--depth", strconv.Itoa(depth))
+	}
+	args = append(args, repoURL, path)
+	cmd := exec.CommandContext(cctx, "git", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	displayCommand := gitCloneDisplayCommand(args)
+	if err := cmd.Run(); err != nil {
+		code := 1
+		var exitErr *exec.ExitError
+		if ok := errorAs(err, &exitErr); ok {
+			code = exitErr.ExitCode()
+		}
+		stderrText := tail(stderr.String(), 20000)
+		return CloneResult{
+			Command:    displayCommand,
+			ReturnCode: code,
+			Stdout:     tail(stdout.String(), 20000),
+			Stderr:     stderrText,
+		}, fmt.Errorf("git clone failed: %w: %s", err, strings.TrimSpace(stderrText))
+	}
+	project, err := r.AddWithAllowedToolsets(path, name, projectID, description, mode, allowedToolsets)
+	if err != nil {
+		return CloneResult{
+			Command:    displayCommand,
+			ReturnCode: 0,
+			Stdout:     tail(stdout.String(), 20000),
+			Stderr:     tail(stderr.String(), 20000),
+		}, err
+	}
+	return CloneResult{
+		Project:    project,
+		Command:    displayCommand,
+		ReturnCode: 0,
+		Stdout:     tail(stdout.String(), 20000),
+		Stderr:     tail(stderr.String(), 20000),
+	}, nil
+}
+
 func normalizeAllowedToolsets(values []string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -79,6 +214,67 @@ func normalizeAllowedToolsets(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func validateNewProjectID(projectID string, projects []Project) error {
+	if !projectIDRE.MatchString(projectID) {
+		return fmt.Errorf("invalid project id: %s", projectID)
+	}
+	for _, existing := range projects {
+		if existing.ID == projectID {
+			return fmt.Errorf("project id already exists: %s", projectID)
+		}
+	}
+	return nil
+}
+
+func nextWorkspacePath(root, projectID string, projects []Project) (string, error) {
+	used := map[string]bool{}
+	for _, project := range projects {
+		abs, err := filepath.Abs(project.Path)
+		if err == nil {
+			used[filepath.Clean(abs)] = true
+		}
+	}
+	for i := 1; ; i++ {
+		name := projectID
+		if i > 1 {
+			name = fmt.Sprintf("%s-%d", projectID, i)
+		}
+		path := filepath.Join(root, name)
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return "", err
+		}
+		if used[filepath.Clean(abs)] {
+			continue
+		}
+		if _, err := os.Stat(abs); os.IsNotExist(err) {
+			return abs, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+}
+
+func inferProjectNameFromRepoURL(repoURL string) string {
+	repoURL = strings.TrimSpace(strings.TrimSuffix(repoURL, "/"))
+	if repoURL == "" {
+		return ""
+	}
+	repoURL = strings.TrimSuffix(repoURL, ".git")
+	if idx := strings.LastIndexAny(repoURL, "/:"); idx >= 0 && idx < len(repoURL)-1 {
+		return repoURL[idx+1:]
+	}
+	return repoURL
+}
+
+func gitCloneDisplayCommand(args []string) string {
+	display := append([]string(nil), args...)
+	if len(display) >= 3 {
+		display[len(display)-2] = "<repo_url>"
+	}
+	return "git " + strings.Join(display, " ")
 }
 
 func (r ProjectRegistry) Resolve(project string, mode Mode) (Workspace, error) {

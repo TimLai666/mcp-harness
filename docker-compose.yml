@@ -7,10 +7,15 @@ services:
     environment:
       MCP_HARNESS_HOME: /data
       MCP_HARNESS_WEB_ADDR: :8765
+      HOME: /root
     volumes:
       - mcp-harness-data:/data
+      - mcp-harness-agents-skills:/root/.agents/skills
+      # Harness-created and cloned workspaces live in /data/workspaces
+      # and are persisted by mcp-harness-data.
       # Mount project folders explicitly, then add them in the Web UI.
       # - C:/Users/tingz/Documents/GitHub:/workspace/GitHub
 
 volumes:
   mcp-harness-data:
+  mcp-harness-agents-skills:

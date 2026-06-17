@@ -31,6 +31,14 @@ func SandboxDir() (string, error) {
 	return ensureDir(filepath.Join(base, "sandbox"))
 }
 
+func WorkspacesDir() (string, error) {
+	base, err := AppDir()
+	if err != nil {
+		return "", err
+	}
+	return ensureDir(filepath.Join(base, "workspaces"))
+}
+
 func SessionsDir() (string, error) {
 	base, err := AppDir()
 	if err != nil {

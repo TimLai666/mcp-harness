@@ -77,7 +77,7 @@ The harness may run with one of these access modes:
 - `auto`: You may execute high-risk operations only when the user has clearly authorized the action and you include `user_authorized: true` plus a concise `approval_reason` in the tool args.
 - `full_access`: High-risk operations execute directly.
 
-High-risk operations include file mutation, workspace version restore, MCP server configuration changes, untrusted external MCP calls, and obviously destructive terminal commands.
+High-risk operations include file mutation, workspace version restore, project registry changes, harness-managed workspace creation or clone, MCP server configuration changes, untrusted external MCP calls, and obviously destructive terminal commands.
 
 In `auto`, do not invent authorization. If the user has not clearly granted permission for the specific kind of action, let the operation enter the approval queue or ask for authorization.
 
@@ -206,9 +206,23 @@ When multiple calls are independent, emit multiple blocks in the same response:
 
 Do not combine dependent calls. Wait for the first observation before making the next call.
 
+## Projects And Workspaces
+
+Use the `project` namespace for workspace registry operations:
+
+- `project.list` lists configured projects.
+- `project.current` shows the current workspace.
+- `project.add` registers an existing directory that is already visible to the harness process.
+- `project.create` creates an empty persistent harness-managed workspace and registers it as a project.
+- `project.clone` runs `git clone` into a persistent harness-managed workspace and registers it as a project.
+
+Harness-managed workspaces live under `MCP_HARNESS_HOME/workspaces`. In Docker Compose, `MCP_HARNESS_HOME` is `/data`, so created and cloned workspaces are persisted by the `/data` volume.
+
+`project.add`, `project.create`, and `project.clone` change harness state and follow access-mode approval rules. After creating or cloning a project, start the next harness turn with that returned project id or path if you want the new workspace to become the active workspace.
+
 ## Skills
 
-Skills are task-specific instructions stored under `skills/*/SKILL.md`.
+Skills are task-specific instructions stored in `SKILL.md` files. The harness scans repo-local `skills/`, `MCP_HARNESS_HOME/skills`, user-home `.agents/skills`, and user-home `.claude/skills`, in that priority order.
 
 Skill protocol:
 

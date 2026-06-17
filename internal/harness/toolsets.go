@@ -44,6 +44,9 @@ func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry, sessionID st
 		"git.show":              r.gitShow,
 		"project.list":          r.projectList,
 		"project.current":       r.projectCurrent,
+		"project.add":           r.projectAdd,
+		"project.create":        r.projectCreate,
+		"project.clone":         r.projectClone,
 		"skill.list":            r.skillList,
 		"skill.use":             r.skillUse,
 		"mcp.list":              r.mcpList,
@@ -143,6 +146,8 @@ func (r *ToolsetRegistry) approvalReason(call HarnessCall) string {
 		return "File mutation requires approval."
 	case "history.restore":
 		return "Restoring a workspace version modifies files and requires approval."
+	case "project.add", "project.create", "project.clone":
+		return "Changing project registry or creating harness-managed workspaces requires approval."
 	case "mcp.add", "mcp.remove":
 		return "Changing MCP server configuration requires approval."
 	case "mcp.call":
@@ -384,6 +389,55 @@ func (r *ToolsetRegistry) projectCurrent(ctx context.Context, args map[string]an
 	return r.workspace, nil
 }
 
+func (r *ToolsetRegistry) projectAdd(ctx context.Context, args map[string]any) (any, error) {
+	project, err := r.projects.AddWithAllowedToolsets(
+		mustString(args, "path"),
+		getString(args, "name", ""),
+		getString(args, "project_id", ""),
+		getString(args, "description", ""),
+		Mode(getString(args, "default_mode", "")),
+		stringSliceArg(args, "allowed_toolsets"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"project": project}, nil
+}
+
+func (r *ToolsetRegistry) projectCreate(ctx context.Context, args map[string]any) (any, error) {
+	project, err := r.projects.CreateWorkspace(
+		mustString(args, "name"),
+		getString(args, "project_id", ""),
+		getString(args, "description", ""),
+		Mode(getString(args, "default_mode", "")),
+		stringSliceArg(args, "allowed_toolsets"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"project": project, "workspaces_root": filepath.Dir(project.Path)}, nil
+}
+
+func (r *ToolsetRegistry) projectClone(ctx context.Context, args map[string]any) (any, error) {
+	timeout := time.Duration(getInt(args, "timeout_ms", 120000)) * time.Millisecond
+	result, err := r.projects.CloneWorkspace(
+		ctx,
+		mustString(args, "repo_url"),
+		getString(args, "branch", ""),
+		getString(args, "name", ""),
+		getString(args, "project_id", ""),
+		getString(args, "description", ""),
+		Mode(getString(args, "default_mode", "")),
+		stringSliceArg(args, "allowed_toolsets"),
+		getInt(args, "depth", 0),
+		timeout,
+	)
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
 func (r *ToolsetRegistry) skillList(ctx context.Context, args map[string]any) (any, error) {
 	return map[string]any{"skills": r.skills.List()}, nil
 }
@@ -609,6 +663,18 @@ func getInt(args map[string]any, key string, fallback int) int {
 	default:
 		return fallback
 	}
+}
+
+func stringSliceArg(args map[string]any, key string) []string {
+	raw, ok := args[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		out = append(out, fmt.Sprint(value))
+	}
+	return out
 }
 
 func truncate(text string, limit int) string {
