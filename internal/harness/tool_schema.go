@@ -135,6 +135,25 @@ func BuiltinToolSchemas() map[string]ToolSchema {
 				"timeout_ms":       {Type: ArgInt},
 			},
 		},
+		"project.rename": {
+			Description: "Rename the selected project. Pass the target as project; the project id is preserved.",
+			Args: map[string]ArgSchema{
+				"name":        {Type: ArgString, Required: true},
+				"description": {Type: ArgString},
+			},
+		},
+		"project.relocate": {
+			Description: "Repoint the selected project at a different existing directory. Updates the registry only; does not move files.",
+			Args: map[string]ArgSchema{
+				"path": {Type: ArgString, Required: true},
+			},
+		},
+		"project.remove": {
+			Description: "Unregister the selected project. With delete_files it also deletes the workspace directory, but only for harness-managed workspaces.",
+			Args: map[string]ArgSchema{
+				"delete_files": {Type: ArgBool},
+			},
+		},
 		"skill.list": {Description: "List available skills."},
 		"skill.use": {
 			Description: "Load a skill and mark it active for the session.",

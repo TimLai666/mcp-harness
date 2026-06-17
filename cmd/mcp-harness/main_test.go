@@ -39,6 +39,7 @@ func TestMCPServerListsAndCallsHarnessTools(t *testing.T) {
 		"history_list", "history_show", "history_restore_preview",
 		"workspace_list_files", "workspace_read_file", "workspace_write_file",
 		"terminal_run", "git_status", "use_skill", "mcp_call", "history_restore",
+		"project_create", "project_clone", "project_rename", "project_relocate", "project_remove",
 	} {
 		if !gotTools[name] {
 			t.Fatalf("expected tool %q in MCP server list, got %#v", name, gotTools)

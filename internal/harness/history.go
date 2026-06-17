@@ -135,13 +135,7 @@ func DiffSnapshots(before, after WorkspaceSnapshot) (string, bool) {
 		} else {
 			appendLimited("+++ /dev/null\n")
 		}
-		appendLimited("@@\n")
-		for _, line := range splitDiffLines(oldFile.Content) {
-			appendLimited("-" + line + "\n")
-		}
-		for _, line := range splitDiffLines(newFile.Content) {
-			appendLimited("+" + line + "\n")
-		}
+		emitUnifiedHunks(splitDiffLines(oldFile.Content), splitDiffLines(newFile.Content), 3, appendLimited)
 		appendLimited("\n")
 	}
 	if truncated {

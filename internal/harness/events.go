@@ -32,6 +32,7 @@ const (
 	EventTerminalOutput = "terminal_output"
 	EventHistory        = "history"
 	EventApproval       = "approval"
+	EventProject        = "project"
 )
 
 // Broker fans out events to subscribers. Sends are non-blocking: a slow or dead
@@ -149,6 +150,20 @@ func publishApproval(record ApprovalRecord) {
 		Status:    string(record.Status),
 		Payload:   record,
 	})
+}
+
+// PublishProjectChange notifies subscribers that the project registry changed
+// (created, cloned, added, renamed, relocated, or removed) so the Web UI can
+// refresh its project list immediately.
+func PublishProjectChange(action string, project *Project) {
+	ev := Event{Type: EventProject, Status: action}
+	if project != nil {
+		ev.ProjectID = project.ID
+		ev.Payload = map[string]any{"action": action, "project": project}
+	} else {
+		ev.Payload = map[string]any{"action": action}
+	}
+	defaultBroker.Publish(ev)
 }
 
 // PublishTerminalOutput streams one chunk of terminal output to subscribers.

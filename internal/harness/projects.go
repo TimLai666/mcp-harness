@@ -202,6 +202,113 @@ func (r ProjectRegistry) CloneWorkspace(ctx context.Context, repoURL, branch, na
 	}, nil
 }
 
+// Rename changes a project's display name (and optionally its description). The
+// stable project id is preserved.
+func (r ProjectRegistry) Rename(selector, newName, newDescription string) (Project, error) {
+	if strings.TrimSpace(newName) == "" {
+		return Project{}, fmt.Errorf("new project name is required")
+	}
+	projects, err := r.List()
+	if err != nil {
+		return Project{}, err
+	}
+	idx := indexOfProject(projects, selector)
+	if idx < 0 {
+		return Project{}, fmt.Errorf("unknown project: %s", selector)
+	}
+	projects[idx].Name = strings.TrimSpace(newName)
+	if strings.TrimSpace(newDescription) != "" {
+		projects[idx].Description = newDescription
+	}
+	if err := SaveProjects(projects); err != nil {
+		return Project{}, err
+	}
+	return projects[idx], nil
+}
+
+// Relocate repoints a project at a different existing directory. It only updates
+// the registry; it does not move files.
+func (r ProjectRegistry) Relocate(selector, newPath string) (Project, error) {
+	abs, err := filepath.Abs(newPath)
+	if err != nil {
+		return Project{}, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return Project{}, err
+	}
+	if !info.IsDir() {
+		return Project{}, fmt.Errorf("project path is not a directory: %s", abs)
+	}
+	projects, err := r.List()
+	if err != nil {
+		return Project{}, err
+	}
+	idx := indexOfProject(projects, selector)
+	if idx < 0 {
+		return Project{}, fmt.Errorf("unknown project: %s", selector)
+	}
+	projects[idx].Path = abs
+	if err := SaveProjects(projects); err != nil {
+		return Project{}, err
+	}
+	return projects[idx], nil
+}
+
+// Remove unregisters a project. When deleteFiles is true it also deletes the
+// workspace directory, but only for harness-managed workspaces under
+// MCP_HARNESS_HOME/workspaces; it refuses to delete files anywhere else.
+func (r ProjectRegistry) Remove(selector string, deleteFiles bool) (Project, bool, error) {
+	projects, err := r.List()
+	if err != nil {
+		return Project{}, false, err
+	}
+	idx := indexOfProject(projects, selector)
+	if idx < 0 {
+		return Project{}, false, fmt.Errorf("unknown project: %s", selector)
+	}
+	removed := projects[idx]
+	filesDeleted := false
+	if deleteFiles {
+		workspaces, err := WorkspacesDir()
+		if err != nil {
+			return Project{}, false, err
+		}
+		if !isWithin(workspaces, removed.Path) {
+			return Project{}, false, fmt.Errorf("refusing to delete files outside harness-managed workspaces: %s", removed.Path)
+		}
+		if err := os.RemoveAll(removed.Path); err != nil {
+			return Project{}, false, err
+		}
+		filesDeleted = true
+	}
+	projects = append(projects[:idx], projects[idx+1:]...)
+	if err := SaveProjects(projects); err != nil {
+		return Project{}, false, err
+	}
+	return removed, filesDeleted, nil
+}
+
+func indexOfProject(projects []Project, selector string) int {
+	selector = strings.TrimSpace(selector)
+	abs, absErr := filepath.Abs(selector)
+	for i, project := range projects {
+		if selector == project.ID || selector == project.Name || selector == project.Path {
+			return i
+		}
+		if absErr == nil && filepath.Clean(abs) == filepath.Clean(project.Path) {
+			return i
+		}
+	}
+	return -1
+}
+
+func isWithin(base, target string) bool {
+	base = filepath.Clean(base)
+	target = filepath.Clean(target)
+	return target == base || strings.HasPrefix(target, base+string(os.PathSeparator))
+}
+
 func normalizeAllowedToolsets(values []string) []string {
 	seen := map[string]bool{}
 	var out []string

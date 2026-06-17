@@ -381,6 +381,28 @@ type projectCloneArgs struct {
 	ApprovalID      string   `json:"approval_id,omitempty" jsonschema:"approval id returned by a prior approval_required result, after an operator approved it"`
 }
 
+type projectRenameArgs struct {
+	Project     string `json:"project" jsonschema:"project id, name, or path to rename"`
+	SessionID   string `json:"session_id,omitempty" jsonschema:"optional session id to group related tool calls"`
+	Name        string `json:"name" jsonschema:"new display name; the project id is preserved"`
+	Description string `json:"description,omitempty" jsonschema:"optional new description"`
+	ApprovalID  string `json:"approval_id,omitempty" jsonschema:"approval id returned by a prior approval_required result, after an operator approved it"`
+}
+
+type projectRelocateArgs struct {
+	Project    string `json:"project" jsonschema:"project id, name, or current path to relocate"`
+	SessionID  string `json:"session_id,omitempty" jsonschema:"optional session id to group related tool calls"`
+	Path       string `json:"path" jsonschema:"new absolute directory path the project should point at; the directory must already exist"`
+	ApprovalID string `json:"approval_id,omitempty" jsonschema:"approval id returned by a prior approval_required result, after an operator approved it"`
+}
+
+type projectRemoveArgs struct {
+	Project     string `json:"project" jsonschema:"project id, name, or path to remove"`
+	SessionID   string `json:"session_id,omitempty" jsonschema:"optional session id to group related tool calls"`
+	DeleteFiles bool   `json:"delete_files,omitempty" jsonschema:"also delete the workspace directory on disk; only allowed for harness-managed workspaces"`
+	ApprovalID  string `json:"approval_id,omitempty" jsonschema:"approval id returned by a prior approval_required result, after an operator approved it"`
+}
+
 func registerProjectTools(server *mcp.Server, runtime *harness.Runtime) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "project_current",
@@ -408,6 +430,27 @@ func registerProjectTools(server *mcp.Server, runtime *harness.Runtime) {
 		Description: "Clone a git repository into a persistent harness-managed workspace and register it as a project. Queues for operator approval; re-run with approval_id after approval.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args projectCloneArgs) (*mcp.CallToolResult, any, error) {
 		return exec(ctx, runtime, "project.clone", "", args.SessionID, toArgs(args))
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "project_rename",
+		Description: "Rename a registered project (the project id stays the same). Pass the target as project. Queues for operator approval; re-run with approval_id after approval.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args projectRenameArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "project.rename", args.Project, args.SessionID, toArgs(args))
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "project_relocate",
+		Description: "Repoint a registered project at a different existing directory. Updates the registry only; does not move files. Queues for operator approval; re-run with approval_id after approval.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args projectRelocateArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "project.relocate", args.Project, args.SessionID, toArgs(args))
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "project_remove",
+		Description: "Unregister a project. With delete_files it also deletes the workspace directory, but only for harness-managed workspaces under MCP_HARNESS_HOME/workspaces. Queues for operator approval; re-run with approval_id after approval.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args projectRemoveArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "project.remove", args.Project, args.SessionID, toArgs(args))
 	})
 }
 

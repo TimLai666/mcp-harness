@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -27,13 +28,47 @@ func TestConsoleHTMLHasNoChatHarnessRunner(t *testing.T) {
 		`/api/sessions`,
 		`/api/tool-calls`,
 		`/api/history/restore-preview`,
+		`/api/events`,
 		`Sessions`,
 		`Tool Calls`,
 		`Approvals`,
+		`renderDiffHTML`,
+		`new EventSource`,
+		`diff-table`,
+		`Live Terminal`,
 	} {
 		if !strings.Contains(indexHTML, required) {
 			t.Fatalf("console HTML should contain %q", required)
 		}
+	}
+}
+
+func TestEventsEndpointStreams(t *testing.T) {
+	t.Setenv("MCP_HARNESS_HOME", t.TempDir())
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/events returned %d", res.StatusCode)
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+	buf := make([]byte, 64)
+	n, _ := res.Body.Read(buf)
+	if !strings.Contains(string(buf[:n]), "connected") {
+		t.Fatalf("expected initial SSE frame, got %q", string(buf[:n]))
 	}
 }
 

@@ -186,7 +186,7 @@ direct MCP tools：
 - workspace：`workspace_list_files`、`workspace_read_file`、`workspace_search`、`workspace_write_file`、`workspace_apply_patch`。
 - terminal：`terminal_run`。
 - git：`git_status`、`git_diff`、`git_log`、`git_show`。
-- project：`project_current`、`project_add`、`project_create`、`project_clone`。
+- project：`project_current`、`project_add`、`project_create`、`project_clone`、`project_rename`、`project_relocate`、`project_remove`。
 - skill：`use_skill`。
 - 外接 MCP：`mcp_call`、`mcp_add`、`mcp_remove`。
 - restore：`history_restore`。
@@ -226,8 +226,11 @@ Agent 透過 project tools 管理 workspace：
 - `project_add`：註冊已存在、且 harness process 看得到的資料夾。
 - `project_create`：在 `MCP_HARNESS_HOME/workspaces` 建立空的持久化 workspace，並註冊成 project。
 - `project_clone`：用 `git clone` 把 repo clone 到 `MCP_HARNESS_HOME/workspaces`，並註冊成 project。
+- `project_rename`：改 project 顯示名稱（project id 不變）；用 `project` 指定目標。
+- `project_relocate`：把 project 重新指向另一個已存在的目錄；只改 registry，不搬檔。
+- `project_remove`：取消註冊 project；帶 `delete_files` 時連同 workspace 目錄一起刪，但只允許刪 `MCP_HARNESS_HOME/workspaces` 底下的 harness-managed 工作區，其他路徑一律拒絕。
 
-這三個 tool 都會修改 project registry 或磁碟內容，因此走 access policy 與 approval queue。建立或 clone 完成後，後續呼叫用回傳的 project id 或 path 當 `project` 即可切到新 workspace。
+這些 tool 都會修改 project registry 或磁碟內容，因此走 access policy 與 approval queue。每次成功變更都會推一個 `project` 事件，Web UI 的專案清單即時更新；若目前選取的 project 被刪除，會自動退回 Default sandbox。建立或 clone 完成後，後續呼叫用回傳的 project id 或 path 當 `project` 即可切到新 workspace。
 
 ### Tools 與 toolset namespace
 
@@ -329,10 +332,10 @@ Instructions...
 
 - `before_version`：工具執行前的 workspace snapshot
 - `after_version`：工具執行後的 workspace snapshot
-- `diff`：前後 snapshot 的文字 diff
+- `diff`：前後 snapshot 的 line-level unified diff（LCS 計算，含 `@@` hunk 與前後 context；超大檔退回整檔置換）
 - `tool`、`args`、`status`、`error`：工具呼叫資訊
 
-這個機制包在 tool call 外層，所以 `workspace_write_file`、`workspace_apply_patch`、`terminal_run` 或 `history_restore` 改檔都會留下 diff。
+這個機制包在 tool call 外層，所以 `workspace_write_file`、`workspace_apply_patch`、`terminal_run` 或 `history_restore` 改檔都會留下 diff。Web UI 把這份 unified diff 解析成左右並排、紅刪綠增、語法高亮的檢視。
 
 目前 snapshot metadata 存在 SQLite，壓縮 snapshot JSON 存在 `MCP_HARNESS_HOME/history/blobs`。它會跳過 `.git`、`node_modules`、`vendor`、`dist`、`build` 等大型目錄，只保存文字檔內容；大型檔、二進位檔或超過上限的內容會標記為 omitted，因此不保證可完整還原這些檔案。尚未做 blob GC。
 
@@ -366,7 +369,7 @@ Web UI 的定位是控制台，不是聊天或任務輸入介面。MVP 已提供
 - 顯示 approval queue 並可核准或拒絕
 - 顯示 MCP servers
 - 顯示 skills metadata
-- 顯示 per-project tool history、每一步 diff，並可 restore before/after version
+- 顯示 per-project tool history、每一步 diff（左右並排、紅刪綠增、依副檔名做語法高亮），並可 restore before/after version
 - restore 前先 preview diff
 - 設定 access policy（`default` / `full_access`），operator 專用，agent 不能改
 - 即時更新：透過 SSE（`/api/events`）推播 tool 生命週期、approval、history 與 `terminal_run` 的逐步輸出，控制台不靠輪詢就會更新

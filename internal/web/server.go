@@ -300,6 +300,8 @@ const indexHTML = `<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>mcp-harness</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
   <style>
     :root { --bg:#f6f7f9; --panel:#fff; --line:#d7dce5; --text:#172033; --muted:#667085; --accent:#2563eb; --bad:#b42318; --ok:#067647; }
     * { box-sizing:border-box; }
@@ -324,6 +326,23 @@ const indexHTML = `<!doctype html>
     .muted { color:var(--muted); }
     .ok { color:var(--ok); }
     .bad { color:var(--bad); }
+    .diff { border:1px solid var(--line); border-radius:8px; overflow:hidden; margin-top:6px; background:#0d1117; }
+    .diff-file { border-top:1px solid #21262d; }
+    .diff-file:first-child { border-top:0; }
+    .diff-file-head { background:#161b22; color:#c9d1d9; padding:5px 10px; font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; word-break:break-all; }
+    .diff-table { width:100%; border-collapse:collapse; table-layout:fixed; font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; }
+    .diff-table td { vertical-align:top; padding:0; }
+    .diff-table td.ln { width:42px; text-align:right; padding:0 6px; color:#6e7681; background:#0d1117; user-select:none; border-right:1px solid #21262d; white-space:nowrap; }
+    .diff-table td.code { padding:0 8px; white-space:pre-wrap; word-break:break-word; color:#c9d1d9; }
+    .diff-table td.code .hljs { background:transparent; padding:0; display:inline; }
+    .diff-table tr.ctx td.code { color:#9da7b3; }
+    .diff-table td.del { background:#3d1c20; }
+    .diff-table td.del.ln { background:#48181d; color:#c08a8a; }
+    .diff-table td.add { background:#15311f; }
+    .diff-table td.add.ln { background:#10391f; color:#7fb98f; }
+    .diff-table td.hunk { background:#161b22; color:#6e7681; padding:1px 8px; }
+    .diff-meta { color:var(--muted); font-size:12px; margin:2px 0 6px; }
+    #terminal .hljs { background:transparent; padding:0; }
   </style>
 </head>
 <body>
@@ -390,6 +409,12 @@ const indexHTML = `<!doctype html>
     async function refreshProjects() {
       const res = await fetch('/api/projects');
       const data = await res.json();
+      const projects = data.projects || [];
+      if (selectedProject && !projects.some(p => p.id === selectedProject)) {
+        selectedProject = '';
+        selectedSession = '';
+        document.getElementById('projectTitle').textContent = 'Default sandbox';
+      }
       const list = document.getElementById('projects');
       list.innerHTML = '';
       const sandbox = document.createElement('div');
@@ -397,7 +422,7 @@ const indexHTML = `<!doctype html>
       sandbox.innerHTML = '<strong>Default sandbox</strong><small>Transient workspace</small>';
       sandbox.onclick = () => selectProject('', 'Default sandbox');
       list.appendChild(sandbox);
-      for (const p of data.projects || []) {
+      for (const p of projects) {
         const div = document.createElement('div');
         div.className = 'card' + (selectedProject === p.id ? ' selected' : '');
         div.innerHTML = '<strong>' + escapeHTML(p.name) + '</strong><small>' + escapeHTML(p.path) + '</small>';
@@ -460,13 +485,83 @@ const indexHTML = `<!doctype html>
       for (const h of data.events || []) {
         const div = document.createElement('div');
         div.className = 'card';
-        div.innerHTML = '<strong>' + escapeHTML(h.tool) + ' <span class="' + (h.status === 'ok' ? 'ok' : 'bad') + '">' + escapeHTML(h.status) + '</span></strong><small>step ' + h.step + ' - ' + escapeHTML(h.timestamp) + '</small><pre>' + escapeHTML(h.diff || 'No file diff for this step.') + '</pre><div class="grid2"><button class="secondary" data-version="' + h.before_version + '">Preview before</button><button class="secondary" data-version="' + h.after_version + '">Preview after</button></div>';
+        div.innerHTML = '<strong>' + escapeHTML(h.tool) + ' <span class="' + (h.status === 'ok' ? 'ok' : 'bad') + '">' + escapeHTML(h.status) + '</span></strong><small>step ' + h.step + ' - ' + escapeHTML(h.timestamp) + (h.diff_truncated ? ' - diff truncated' : '') + '</small>' + renderDiffHTML(h.diff) + '<div class="grid2"><button class="secondary" data-version="' + h.before_version + '">Preview before</button><button class="secondary" data-version="' + h.after_version + '">Preview after</button></div>';
         div.onclick = (event) => {
           if (event.target.dataset.version) return previewRestore(event.target.dataset.version);
           setDetail(h);
         };
         list.appendChild(div);
       }
+    }
+    const DIFF_LANG = { go:'go', js:'javascript', mjs:'javascript', cjs:'javascript', ts:'typescript', tsx:'typescript', jsx:'javascript', py:'python', rb:'ruby', rs:'rust', java:'java', c:'c', h:'c', cpp:'cpp', cc:'cpp', hpp:'cpp', cs:'csharp', php:'php', sh:'bash', bash:'bash', zsh:'bash', json:'json', yml:'yaml', yaml:'yaml', toml:'ini', ini:'ini', md:'markdown', html:'xml', htm:'xml', xml:'xml', svg:'xml', css:'css', scss:'scss', less:'less', sql:'sql', kt:'kotlin', swift:'swift', lua:'lua', dockerfile:'dockerfile' };
+    function diffLang(path) {
+      const base = (path || '').split('/').pop().toLowerCase();
+      if (base === 'dockerfile') return 'dockerfile';
+      const ext = base.includes('.') ? base.split('.').pop() : '';
+      return DIFF_LANG[ext] || null;
+    }
+    function hl(code, lang) {
+      if (window.hljs && lang && hljs.getLanguage(lang)) {
+        try { return hljs.highlight(code, { language: lang, ignoreIllegal: true }).value; } catch (e) {}
+      }
+      return escapeHTML(code);
+    }
+    function diffCell(kind, ln, codeHTML) {
+      const k = kind ? ' ' + kind : '';
+      return '<td class="ln' + k + '">' + (ln === null ? '' : ln) + '</td>'
+        + '<td class="code' + k + '">' + (codeHTML === null ? '' : codeHTML) + '</td>';
+    }
+    function renderDiffHTML(diffText) {
+      if (!diffText || !diffText.trim()) return '<div class="diff-meta">No file diff for this step.</div>';
+      const lines = diffText.split('\n');
+      let html = '<div class="diff">', open = false, lang = null, oldNo = 0, newNo = 0;
+      let dels = [], adds = [];
+      function flush() {
+        const n = Math.max(dels.length, adds.length);
+        for (let k = 0; k < n; k++) {
+          const d = k < dels.length ? dels[k] : null;
+          const a = k < adds.length ? adds[k] : null;
+          html += '<tr class="chg">'
+            + diffCell(d !== null ? 'del' : '', d !== null ? ++oldNo : null, d !== null ? hl(d, lang) : null)
+            + diffCell(a !== null ? 'add' : '', a !== null ? ++newNo : null, a !== null ? hl(a, lang) : null)
+            + '</tr>';
+        }
+        dels = []; adds = [];
+      }
+      function closeFile() { if (open) { flush(); html += '</table></div>'; open = false; } }
+      for (const line of lines) {
+        if (line.startsWith('diff --git ')) {
+          closeFile();
+          const m = line.match(/^diff --git a\/(.*) b\/(.*)$/);
+          const path = m ? m[2] : line.slice('diff --git '.length);
+          lang = diffLang(path);
+          html += '<div class="diff-file"><div class="diff-file-head">' + escapeHTML(path) + '</div><table class="diff-table">';
+          open = true;
+        } else if (!open) {
+          continue;
+        } else if (line.startsWith('--- ') || line.startsWith('+++ ') || line.startsWith('new file') || line.startsWith('deleted file')) {
+          continue;
+        } else if (line.startsWith('@@')) {
+          flush();
+          const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+          if (m) { oldNo = parseInt(m[1], 10) - 1; newNo = parseInt(m[2], 10) - 1; }
+          html += '<tr><td class="hunk" colspan="4">' + escapeHTML(line) + '</td></tr>';
+        } else if (line.startsWith('#')) {
+          flush();
+          html += '<tr><td class="hunk" colspan="4">' + escapeHTML(line.replace(/^#\s*/, '')) + '</td></tr>';
+        } else if (line.startsWith('-')) {
+          dels.push(line.slice(1));
+        } else if (line.startsWith('+')) {
+          adds.push(line.slice(1));
+        } else if (line.startsWith(' ')) {
+          flush();
+          const text = hl(line.slice(1), lang);
+          html += '<tr class="ctx">' + diffCell('', ++oldNo, text) + diffCell('', ++newNo, text) + '</tr>';
+        }
+      }
+      closeFile();
+      html += '</div>';
+      return html;
     }
     async function previewRestore(versionID) {
       const res = await fetch('/api/history/restore-preview', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({version_id:versionID}) });
@@ -575,6 +670,8 @@ const indexHTML = `<!doctype html>
         refreshHistory();
       } else if (ev.type === 'approval') {
         refreshApprovals();
+      } else if (ev.type === 'project') {
+        refreshProjects();
       }
     }
     function connectEvents() {

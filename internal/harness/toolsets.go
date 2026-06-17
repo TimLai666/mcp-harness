@@ -51,6 +51,9 @@ func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry, sessionID st
 		"project.add":           r.projectAdd,
 		"project.create":        r.projectCreate,
 		"project.clone":         r.projectClone,
+		"project.rename":        r.projectRename,
+		"project.relocate":      r.projectRelocate,
+		"project.remove":        r.projectRemove,
 		"skill.list":            r.skillList,
 		"skill.use":             r.skillUse,
 		"mcp.list":              r.mcpList,
@@ -148,8 +151,10 @@ func (r *ToolsetRegistry) approvalReason(call HarnessCall) string {
 		return "File mutation requires approval."
 	case "history.restore":
 		return "Restoring a workspace version modifies files and requires approval."
-	case "project.add", "project.create", "project.clone":
+	case "project.add", "project.create", "project.clone", "project.rename", "project.relocate":
 		return "Changing project registry or creating harness-managed workspaces requires approval."
+	case "project.remove":
+		return "Removing a project (and optionally deleting its files) requires approval."
 	case "mcp.add", "mcp.remove":
 		return "Changing MCP server configuration requires approval."
 	case "mcp.call":
@@ -435,6 +440,7 @@ func (r *ToolsetRegistry) projectAdd(ctx context.Context, args map[string]any) (
 	if err != nil {
 		return nil, err
 	}
+	PublishProjectChange("added", &project)
 	return map[string]any{"project": project}, nil
 }
 
@@ -449,6 +455,7 @@ func (r *ToolsetRegistry) projectCreate(ctx context.Context, args map[string]any
 	if err != nil {
 		return nil, err
 	}
+	PublishProjectChange("created", &project)
 	return map[string]any{"project": project, "workspaces_root": filepath.Dir(project.Path)}, nil
 }
 
@@ -469,7 +476,44 @@ func (r *ToolsetRegistry) projectClone(ctx context.Context, args map[string]any)
 	if err != nil {
 		return result, err
 	}
+	PublishProjectChange("cloned", &result.Project)
 	return result, nil
+}
+
+func (r *ToolsetRegistry) projectRename(ctx context.Context, args map[string]any) (any, error) {
+	if r.workspace.Project == nil {
+		return nil, fmt.Errorf("no project selected to rename; pass project as the target")
+	}
+	project, err := r.projects.Rename(r.workspace.Project.ID, mustString(args, "name"), getString(args, "description", ""))
+	if err != nil {
+		return nil, err
+	}
+	PublishProjectChange("renamed", &project)
+	return map[string]any{"project": project}, nil
+}
+
+func (r *ToolsetRegistry) projectRelocate(ctx context.Context, args map[string]any) (any, error) {
+	if r.workspace.Project == nil {
+		return nil, fmt.Errorf("no project selected to relocate; pass project as the target")
+	}
+	project, err := r.projects.Relocate(r.workspace.Project.ID, mustString(args, "path"))
+	if err != nil {
+		return nil, err
+	}
+	PublishProjectChange("relocated", &project)
+	return map[string]any{"project": project}, nil
+}
+
+func (r *ToolsetRegistry) projectRemove(ctx context.Context, args map[string]any) (any, error) {
+	if r.workspace.Project == nil {
+		return nil, fmt.Errorf("no project selected to remove; pass project as the target")
+	}
+	project, filesDeleted, err := r.projects.Remove(r.workspace.Project.ID, getBool(args, "delete_files", false))
+	if err != nil {
+		return nil, err
+	}
+	PublishProjectChange("removed", &project)
+	return map[string]any{"removed": project.ID, "project": project, "files_deleted": filesDeleted}, nil
 }
 
 func (r *ToolsetRegistry) skillList(ctx context.Context, args map[string]any) (any, error) {

@@ -26,7 +26,7 @@
 - `cmd/mcp-harness`：MCP stdio server。
 - `cmd/mcp-harness-web`：Web UI 控制台與遠端 MCP endpoint。
 - `internal/harness`：核心 runtime、單一工具執行、toolsets、skills、prompt、event broker。
-- `internal/harness/events.go`：in-process event broker，串流 `terminal_run` 輸出與 tool/approval/history 事件給 Web UI。
+- `internal/harness/events.go`：in-process event broker，串流 `terminal_run` 輸出與 tool/approval/history/project 事件給 Web UI；project registry 變更(建立/clone/新增/改名/重定位/刪除)都會推 `project` 事件讓控制台即時更新。
 - `internal/mcpserver`：direct MCP tool 註冊與名稱轉換(`exec()`)。
 - `internal/web`：Web API、SSE(`/api/events`)、HTML 控制台。
 - `MCP_HARNESS_HOME/harness.db`：SQLite primary store。
