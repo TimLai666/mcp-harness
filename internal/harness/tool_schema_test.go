@@ -6,16 +6,15 @@ import (
 	"testing"
 )
 
-func TestCatalogIncludesToolSchemas(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("MCP_HARNESS_HOME", home)
-	rt := NewRuntime()
-	res, err := rt.Run(context.Background(), RunRequest{Message: "inspect"})
-	if err != nil {
-		t.Fatal(err)
+func TestBuiltinToolSchemasDescribeArgs(t *testing.T) {
+	schemas := BuiltinToolSchemas()
+	readFile, ok := schemas["workspace.read_file"]
+	if !ok {
+		t.Fatal("expected workspace.read_file schema")
 	}
-	if !strings.Contains(res.SystemPrompt, `"path"`) || !strings.Contains(res.SystemPrompt, `"required": true`) {
-		t.Fatal("expected injected catalog to include argument schemas")
+	path, ok := readFile.Args["path"]
+	if !ok || !path.Required {
+		t.Fatalf("expected required path arg, got %#v", readFile.Args)
 	}
 }
 
@@ -23,19 +22,15 @@ func TestExecuteRejectsInvalidToolArgsBeforeHandler(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MCP_HARNESS_HOME", home)
 	rt := NewRuntime()
-	res, err := rt.Run(context.Background(), RunRequest{
-		Message: `<harness_tool_call>
-{"tool":"workspace.read_file","args":{}}
-</harness_tool_call>`,
+	res, err := rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool: "workspace.read_file",
+		Args: map[string]any{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Observations) != 1 || res.Observations[0].Status != "error" {
-		t.Fatalf("expected error observation, got %#v", res.Observations)
-	}
-	if !strings.Contains(res.Observations[0].Error, `missing required arg "path"`) {
-		t.Fatalf("unexpected error: %s", res.Observations[0].Error)
+	if res.Status != "error" || !strings.Contains(res.Error, `missing required arg "path"`) {
+		t.Fatalf("expected missing arg error, got %#v", res)
 	}
 }
 
@@ -43,34 +38,14 @@ func TestExecuteRejectsUnknownToolArgs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MCP_HARNESS_HOME", home)
 	rt := NewRuntime()
-	res, err := rt.Run(context.Background(), RunRequest{
-		Message: `<harness_tool_call>
-{"tool":"git.status","args":{"surprise":true}}
-</harness_tool_call>`,
+	res, err := rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool: "git.status",
+		Args: map[string]any{"surprise": true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Observations) != 1 || !strings.Contains(res.Observations[0].Error, "unknown arg") {
-		t.Fatalf("expected unknown arg error, got %#v", res.Observations)
-	}
-}
-
-func TestAutoApprovalAuditArgsAreAllowedBySchema(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("MCP_HARNESS_HOME", home)
-	rt := NewRuntime()
-	res, err := rt.Run(context.Background(), RunRequest{
-		Mode:       ModeWork,
-		AccessMode: AccessAuto,
-		Message: `<harness_tool_call>
-{"tool":"workspace.write_file","args":{"path":"note.txt","content":"ok","user_authorized":true,"approval_reason":"user asked to continue"}}
-</harness_tool_call>`,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Observations) != 1 || res.Observations[0].Status != "ok" {
-		t.Fatalf("expected ok, got %#v", res.Observations)
+	if res.Status != "error" || !strings.Contains(res.Error, "unknown arg") {
+		t.Fatalf("expected unknown arg error, got %#v", res)
 	}
 }

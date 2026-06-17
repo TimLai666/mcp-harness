@@ -28,6 +28,8 @@ type Store interface {
 	LoadApproval(string) (ApprovalRecord, error)
 	LoadSessionState(string) SessionState
 	SaveSessionState(SessionState) error
+	GetSetting(string) (string, bool, error)
+	SetSetting(string, string) error
 	RecordTurn(string, RunRequest, RunResponse) error
 	ListSessions(projectID string, limit int) ([]SessionRecord, error)
 	GetSession(string) (SessionRecord, []TurnRecord, error)
@@ -99,6 +101,7 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS history_events (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, session_id TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', workspace_root TEXT NOT NULL, mode TEXT NOT NULL, step INTEGER NOT NULL, tool TEXT NOT NULL, status TEXT NOT NULL, args_json TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '', before_version TEXT NOT NULL, after_version TEXT NOT NULL, diff TEXT NOT NULL DEFAULT '', diff_truncated INTEGER NOT NULL DEFAULT 0, snapshot_notice TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS history_versions (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, session_id TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', workspace_root TEXT NOT NULL, mode TEXT NOT NULL, step INTEGER NOT NULL, tool TEXT NOT NULL, label TEXT NOT NULL, snapshot_json TEXT NOT NULL DEFAULT '', snapshot_path TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS session_skills (session_id TEXT NOT NULL, skill_name TEXT NOT NULL, PRIMARY KEY(session_id, skill_name))`,
+		`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, timestamp DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id, call_index)`,
 		`CREATE INDEX IF NOT EXISTS idx_history_project ON history_events(project_id, timestamp DESC)`,
@@ -369,6 +372,26 @@ func (s *SQLiteStore) SaveSessionState(state SessionState) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *SQLiteStore) GetSetting(key string) (string, bool, error) {
+	defer s.closeIfNeeded()
+	row := s.db.QueryRow(`SELECT value FROM settings WHERE key=?`, key)
+	var value string
+	err := row.Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return value, true, nil
+}
+
+func (s *SQLiteStore) SetSetting(key, value string) error {
+	defer s.closeIfNeeded()
+	_, err := s.db.Exec(`INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	return err
 }
 
 func (s *SQLiteStore) RecordTurn(sessionID string, req RunRequest, res RunResponse) error {

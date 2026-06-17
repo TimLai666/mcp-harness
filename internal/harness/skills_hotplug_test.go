@@ -4,11 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestActiveSkillReloadsChangedContent(t *testing.T) {
+func TestUseSkillReloadsChangedContent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MCP_HARNESS_HOME", home)
 	skillDir := filepath.Join(home, "skills", "demo")
@@ -25,21 +24,41 @@ func TestActiveSkillReloadsChangedContent(t *testing.T) {
 	writeSkill("version one")
 	rt := NewRuntime()
 	sessionID := "skill-hotplug"
-	res, err := rt.Run(context.Background(), RunRequest{
+	res, err := rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool:      "skill.use",
 		SessionID: sessionID,
-		Message: `<harness_tool_call>
-{"tool":"skill.use","args":{"name":"demo"}}
-</harness_tool_call>`,
+		Args:      map[string]any{"name": "demo"},
 	})
-	if err != nil || len(res.ActiveSkills) != 1 {
-		t.Fatalf("expected active skill, res=%#v err=%v", res, err)
-	}
-	writeSkill("version two")
-	res, err = rt.Run(context.Background(), RunRequest{SessionID: sessionID, Message: "continue"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.SystemPrompt, "version two") {
-		t.Fatal("expected changed skill content to be injected immediately")
+	if res.Status != "ok" || len(res.ActiveSkills) != 1 {
+		t.Fatalf("expected active skill, got %#v", res)
 	}
+	if !resultContains(t, res.Result, "version one") {
+		t.Fatalf("expected first skill content, got %#v", res.Result)
+	}
+
+	writeSkill("version two")
+	res, err = rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool:      "skill.use",
+		SessionID: sessionID,
+		Args:      map[string]any{"name": "demo"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resultContains(t, res.Result, "version two") {
+		t.Fatal("expected changed skill content to be loaded immediately")
+	}
+}
+
+func resultContains(t *testing.T, value any, needle string) bool {
+	t.Helper()
+	result, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	content, _ := result["content"].(string)
+	return content != "" && content == needle
 }

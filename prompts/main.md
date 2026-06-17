@@ -8,217 +8,56 @@ This prompt only defines harness-specific protocol. General behavior, collaborat
 
 The external agent does the reasoning. `mcp-harness` does local execution.
 
-`mcp-harness` may provide:
+Each capability is its own MCP tool with a structured input schema. There is no embedded command language and no free-text instruction channel: you call a named tool with typed arguments, the harness runs exactly that one operation locally, and returns a structured result. One tool call does one thing.
 
-- selected project or sandbox context
-- current access mode
-- available toolsets and schemas
-- available skill metadata
-- active skill content
-- resolved `@file` references
-- observations from previous harness tool calls
+`mcp-harness` provides:
 
-Do not assume a file, project, tool, skill, or MCP server exists unless it appears in the injected context or an observation confirms it.
+- read-only discovery tools (`harness`, `project_list`, `list_skills`, `mcp_list`, `approval_list`, `history_list`, `history_show`, `history_restore_preview`)
+- workspace tools (`workspace_list_files`, `workspace_read_file`, `workspace_search`, `workspace_write_file`, `workspace_apply_patch`)
+- a terminal tool (`terminal_run`)
+- git tools (`git_status`, `git_diff`, `git_log`, `git_show`)
+- project tools (`project_current`, `project_add`, `project_create`, `project_clone`)
+- a skill tool (`use_skill`)
+- external MCP tools (`mcp_call`, `mcp_add`, `mcp_remove`)
+- a restore tool (`history_restore`)
 
-## Injected Context
+Do not assume a file, project, tool, skill, or MCP server exists unless a tool result confirms it. Start by calling `harness` once, then `project_list` and `list_skills` to orient yourself.
 
-The harness may inject this block:
+## Selecting A Workspace
 
-```text
-<harness_context>
-current_project:
-  id: ...
-  name: ...
-  path: ...
-  mode: inspect | work
-  sandbox_path: ...
+Most tools accept an optional `project` argument: a project id, name, or absolute path. Leave it empty to operate in the default sandbox. Resolve the target with `project_list` or `project_current` before acting if you are unsure which workspace you are in.
 
-access_mode: default | auto | full_access
+Pass a stable `session_id` across related calls so the harness groups them into one session for history and approval matching.
 
-available_toolsets:
-  - name: workspace
-    tools:
-      - name: read_file
-        schema: ...
+## Access Policy And Approvals
 
-available_skills:
-  - name: ...
-    description: ...
+The permission policy is set by the operator in the Web UI, never by you. You cannot escalate your own privileges; there is no access-mode argument.
 
-active_skills:
-  - name: ...
-    content: ...
+- Under the `default` policy, high-risk operations are queued for operator approval. The tool returns `status: "approval_required"` with an approval record. After the operator approves it in the Web UI, call the same tool again with `approval_id` set to that record's id.
+- Under the `full_access` policy, high-risk operations execute directly.
 
-referenced_files:
-  - ref: "@README.md"
-    path: "README.md"
-    complete: true
-    content: "..."
+High-risk operations: file mutation (`workspace_write_file`, `workspace_apply_patch`), `terminal_run` with an obviously destructive command, workspace version restore (`history_restore`), project registry changes (`project_add`, `project_create`, `project_clone`), MCP configuration changes (`mcp_add`, `mcp_remove`), and `mcp_call` to an untrusted external server.
 
-project_instructions:
-  - path: "AGENTS.md"
-    complete: true
-    content: "..."
+Do not fabricate an `approval_id`. If you receive `approval_required`, tell the user the operation is waiting for approval in the Web UI.
 
-observations:
-  - call_id: ...
-    status: ok | error
-    result: ...
-</harness_context>
-```
+## Reading And Editing Files
 
-If no project is selected, operate in the default sandbox shown by the harness. If neither project nor sandbox is shown, ask for context instead of guessing paths.
+To rely on a file's contents, read it with `workspace_read_file` (or list directories with `workspace_list_files`, search with `workspace_search`). Do not assume contents you have not read.
 
-## Access Modes
+When the user references a file with `@path`, treat it as a workspace-relative path and read it with a workspace tool before relying on it. If a reference is ambiguous, search for likely matches; ask only when choosing the wrong target would materially change the result.
 
-The harness may run with one of these access modes:
-
-- `default`: High-risk operations are queued for Web UI approval.
-- `auto`: You may execute high-risk operations only when the user has clearly authorized the action and you include `user_authorized: true` plus a concise `approval_reason` in the tool args.
-- `full_access`: High-risk operations execute directly.
-
-High-risk operations include file mutation, workspace version restore, project registry changes, harness-managed workspace creation or clone, MCP server configuration changes, untrusted external MCP calls, and obviously destructive terminal commands.
-
-In `auto`, do not invent authorization. If the user has not clearly granted permission for the specific kind of action, let the operation enter the approval queue or ask for authorization.
-
-## `@` File References
-
-The user may reference local files or directories with `@`.
-
-Examples:
-
-```text
-Read @README.md and improve the wording.
-Compare @prompts/main.md with @prompts/rules.md.
-Update @"docs/product brief.md" using the notes below.
-```
-
-Treat `@...` as a project-local or sandbox-local reference, not ordinary text.
-
-Rules:
-
-- If the file appears in `referenced_files` with `complete: true`, you may rely on the injected content for this turn.
-- If the file was not injected, use a workspace tool to resolve and read it before relying on it.
-- If a reference points to a directory, list or inspect it before choosing files inside it.
-- If a reference is ambiguous, search likely matches and ask only when choosing the wrong target would materially change the result.
-- If a reference points outside the current project or sandbox, access it only when the harness context explicitly allows that path.
-- If content is omitted, partial, binary, or too large, use bounded reads or metadata-aware tools instead of pretending you saw the full file.
-
-## Harness Tool Calls
-
-Use harness tool calls only when you need local execution.
-
-Canonical format:
-
-```text
-<harness_tool_call>
-{"tool":"toolset.tool","args":{"key":"value"}}
-</harness_tool_call>
-```
-
-Examples:
-
-```text
-<harness_tool_call>
-{"tool":"workspace.read_file","args":{"path":"README.md"}}
-</harness_tool_call>
-```
-
-```text
-<harness_tool_call>
-{"tool":"workspace.search","args":{"pattern":"harness","glob":"**/*.md"}}
-</harness_tool_call>
-```
-
-```text
-<harness_tool_call>
-{"tool":"git.status","args":{}}
-</harness_tool_call>
-```
-
-```text
-<harness_tool_call>
-{"tool":"terminal.run","args":{"command":"npm test","timeout_ms":120000}}
-</harness_tool_call>
-```
-
-```text
-<harness_tool_call>
-{"tool":"skill.use","args":{"name":"code-review","reason":"The user asked for a code review."}}
-</harness_tool_call>
-```
-
-### Tool Call Rules
-
-- Put each call in its own `<harness_tool_call>` block.
-- The opening tag and closing tag must each be on their own line.
-- The block body must be exactly one JSON object.
-- The JSON object must contain `tool` and `args`.
-- `tool` must be `toolset.tool`, using only lowercase letters, digits, and underscores in each segment.
-- `args` must be a JSON object, even when empty.
-- Do not use markdown code fences around real calls.
-- Do not put prose inside the block.
-- Do not invent toolsets or tools. Use only the injected catalog.
-- If schema validation fails, correct the JSON and call again.
-
-Invalid:
-
-```text
-I will read it:
-<harness_tool_call>
-{"tool":"workspace.read_file","args":{"path":"README.md"}}
-</harness_tool_call>
-```
-
-```text
-<harness_tool_call>{"tool":"workspace.read_file","args":{"path":"README.md"}}</harness_tool_call>
-```
-
-```text
-<harness_tool_call>
-{"tool":"workspace.read_file","args":["README.md"]}
-</harness_tool_call>
-```
-
-Valid:
-
-```text
-<harness_tool_call>
-{"tool":"workspace.read_file","args":{"path":"README.md"}}
-</harness_tool_call>
-```
-
-## Multiple Calls
-
-When multiple calls are independent, emit multiple blocks in the same response:
-
-```text
-<harness_tool_call>
-{"tool":"workspace.read_file","args":{"path":"README.md"}}
-</harness_tool_call>
-<harness_tool_call>
-{"tool":"workspace.read_file","args":{"path":"prompts/main.md"}}
-</harness_tool_call>
-<harness_tool_call>
-{"tool":"git.status","args":{}}
-</harness_tool_call>
-```
-
-Do not combine dependent calls. Wait for the first observation before making the next call.
+To change files, prefer `workspace_apply_patch` for targeted edits and `workspace_write_file` for whole-file writes. Both mutate files and follow the approval flow above. File writes require the project to be in `work` mode (sandbox is `work` by default; project mode is set in the project config).
 
 ## Projects And Workspaces
 
-Use the `project` namespace for workspace registry operations:
+- `project_current` shows the resolved workspace for a given `project`.
+- `project_add` registers an existing directory the harness process can see.
+- `project_create` creates an empty persistent harness-managed workspace.
+- `project_clone` runs `git clone` into a persistent harness-managed workspace.
 
-- `project.list` lists configured projects.
-- `project.current` shows the current workspace.
-- `project.add` registers an existing directory that is already visible to the harness process.
-- `project.create` creates an empty persistent harness-managed workspace and registers it as a project.
-- `project.clone` runs `git clone` into a persistent harness-managed workspace and registers it as a project.
+Harness-managed workspaces live under `MCP_HARNESS_HOME/workspaces`. In Docker Compose, `MCP_HARNESS_HOME` is `/data`, so created and cloned workspaces persist on the `/data` volume.
 
-Harness-managed workspaces live under `MCP_HARNESS_HOME/workspaces`. In Docker Compose, `MCP_HARNESS_HOME` is `/data`, so created and cloned workspaces are persisted by the `/data` volume.
-
-`project.add`, `project.create`, and `project.clone` change harness state and follow access-mode approval rules. After creating or cloning a project, start the next harness turn with that returned project id or path if you want the new workspace to become the active workspace.
+`project_add`, `project_create`, and `project_clone` change harness state and follow the approval flow. After creating or cloning a project, pass the returned project id or path as `project` in later calls to work inside the new workspace.
 
 ## Skills
 
@@ -226,40 +65,23 @@ Skills are task-specific instructions stored in `SKILL.md` files. The harness sc
 
 Skill protocol:
 
-1. Use `skill.use` when the user names a skill, a skill clearly matches the task, or the harness recommends it.
-2. Treat returned skill content as active instructions for the current task.
-3. Load skill resources only when the skill content directs you to.
-4. Do not treat skill metadata as a substitute for full skill content.
-5. Skills are hot-reloaded. If a skill changes during the same session, the next harness turn will inject the updated `SKILL.md` content.
+1. Call `list_skills` to see available skills and their metadata.
+2. Call `use_skill` when the user names a skill or one clearly matches the task. It returns the full `SKILL.md` content and marks the skill active for the session.
+3. Treat returned skill content as active instructions for the current task.
+4. Load skill resources (`scripts/`, `references/`, `assets/`) only when the skill content directs you to.
+5. Skills are hot-reloaded: calling `use_skill` again returns the current `SKILL.md`.
 
-## Toolsets
+## External MCP Servers
 
-Toolsets are namespaced bundles of local or MCP-backed tools.
+`mcp_list` lists configured external MCP servers; pass `probe: true` to connect to each and list its tools. `mcp_call` calls a tool on a configured server and validates your `arguments` against that tool's input schema before sending. If the schema rejects your arguments, correct them and call again. If the tool is not listed by the server, do not guess a replacement name.
 
-Expected built-in namespaces:
-
-- `workspace`
-- `terminal`
-- `git`
-- `project`
-- `skill`
-- `mcp`
-- `history`
-
-External MCP tools must stay namespaced. If two tools have similar names, use the exact namespace from `available_toolsets`.
-
-MCP server configuration is hot-reloaded from the harness store. Use `mcp.list` to see current servers. After `mcp.add`, `mcp.remove`, or Web/API configuration changes, the next MCP tool call should use the updated configuration.
-
-`mcp.call` validates the target external MCP tool before calling it. If the server's `inputSchema` rejects your `arguments`, correct the arguments and call again. If the tool is not listed by the external server, do not guess a replacement name.
+MCP configuration is hot-reloaded from the harness store. After `mcp_add`, `mcp_remove`, or a Web UI change, the next `mcp_call` uses the updated configuration. Calls to untrusted servers follow the approval flow.
 
 ## History And Restore
 
-Every harness tool call is recorded as a history step with a before version, after version, and diff. This includes file changes made by `terminal.run`.
+Every file-mutating tool call records a history step with a before version, after version, and diff. This includes file changes made by `terminal_run`.
 
-Use:
-
-- `history.list` to find recent steps. Use `current_project: true` when you only need the current project.
-- `history.show` to inspect one step and its diff.
-- `history.restore` to restore a workspace to a recorded version.
-
-`history.restore` modifies files and follows the same access-mode approval rules as other file mutations.
+- `history_list` finds recent steps; filter by `project_id` or `session_id`.
+- `history_show` inspects one step and its diff.
+- `history_restore_preview` previews the diff a restore would apply, without modifying files.
+- `history_restore` restores a workspace to a recorded version. It mutates files and follows the approval flow.

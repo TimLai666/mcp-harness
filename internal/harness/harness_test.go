@@ -4,11 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestRuntimeExecutesReadFileCall(t *testing.T) {
+func TestExecuteToolReadsFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MCP_HARNESS_HOME", home)
 	sandbox := filepath.Join(home, "sandbox")
@@ -19,24 +18,23 @@ func TestRuntimeExecutesReadFileCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt := NewRuntime()
-	res, err := rt.Run(context.Background(), RunRequest{
-		Mode: ModeWork,
-		Message: `<harness_tool_call>
-{"tool":"workspace.read_file","args":{"path":"note.txt"}}
-</harness_tool_call>`,
+	res, err := rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool: "workspace.read_file",
+		Args: map[string]any{"path": "note.txt"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Status != "ok" {
-		t.Fatalf("unexpected status: %s", res.Status)
+		t.Fatalf("unexpected status: %s (%s)", res.Status, res.Error)
 	}
-	if len(res.Observations) != 1 || res.Observations[0].Status != "ok" {
-		t.Fatalf("unexpected observations: %#v", res.Observations)
+	result, ok := res.Result.(map[string]any)
+	if !ok || result["content"] != "hello" {
+		t.Fatalf("unexpected result: %#v", res.Result)
 	}
 }
 
-func TestRuntimeInjectsProjectInstructions(t *testing.T) {
+func TestGuideInjectsProjectInstructions(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MCP_HARNESS_HOME", home)
 	sandbox := filepath.Join(home, "sandbox")
@@ -46,18 +44,9 @@ func TestRuntimeInjectsProjectInstructions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sandbox, "AGENTS.md"), []byte("Use repo-specific rules."), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res, err := NewRuntime().Run(context.Background(), RunRequest{
-		Mode:    ModeInspect,
-		Message: "inspect the project rules",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Instructions) != 1 || res.Instructions[0].Content != "Use repo-specific rules." {
-		t.Fatalf("expected injected project instructions, got %#v", res.Instructions)
-	}
-	if !strings.Contains(res.SystemPrompt, "Use repo-specific rules.") {
-		t.Fatal("expected system prompt to include project instructions")
+	guide := NewRuntime().Guide("")
+	if len(guide.ProjectInstructions) != 1 || guide.ProjectInstructions[0].Content != "Use repo-specific rules." {
+		t.Fatalf("expected injected project instructions, got %#v", guide.ProjectInstructions)
 	}
 }
 
@@ -77,16 +66,14 @@ func TestProjectAllowedToolsetsAreEnforced(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := NewRuntime().Run(context.Background(), RunRequest{
+	res, err := NewRuntime().ExecuteTool(context.Background(), ToolCallRequest{
+		Tool:    "git.status",
 		Project: "repo",
-		Message: `<harness_tool_call>
-{"tool":"git.status","args":{}}
-</harness_tool_call>`,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Observations) != 1 || res.Observations[0].Status != "error" || !strings.Contains(res.Observations[0].Error, "not allowed") {
-		t.Fatalf("expected allowed_toolsets rejection, got %#v", res.Observations)
+	if res.Status != "error" || res.Error == "" {
+		t.Fatalf("expected allowed_toolsets rejection, got %#v", res)
 	}
 }

@@ -21,17 +21,12 @@ func TestMCPListReloadsChangedConfig(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := rt.Run(context.Background(), RunRequest{
-		SessionID: sessionID,
-		Message: `<harness_tool_call>
-{"tool":"mcp.list","args":{}}
-</harness_tool_call>`,
-	})
+	res, err := rt.ExecuteTool(context.Background(), ToolCallRequest{Tool: "mcp.list", SessionID: sessionID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(mustJSON(t, res.Observations), `"id":"one"`) {
-		t.Fatalf("expected first MCP config, got %#v", res.Observations)
+	if !strings.Contains(mustJSON(t, res.Result), `"id":"one"`) {
+		t.Fatalf("expected first MCP config, got %#v", res.Result)
 	}
 
 	if err := AddMCPServer(MCPServerConfig{
@@ -42,16 +37,11 @@ func TestMCPListReloadsChangedConfig(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	res, err = rt.Run(context.Background(), RunRequest{
-		SessionID: sessionID,
-		Message: `<harness_tool_call>
-{"tool":"mcp.list","args":{}}
-</harness_tool_call>`,
-	})
+	res, err = rt.ExecuteTool(context.Background(), ToolCallRequest{Tool: "mcp.list", SessionID: sessionID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := mustJSON(t, res.Observations)
+	got := mustJSON(t, res.Result)
 	if !strings.Contains(got, `"id":"one"`) || !strings.Contains(got, `"id":"two"`) {
 		t.Fatalf("expected changed MCP config to be visible immediately, got %s", got)
 	}

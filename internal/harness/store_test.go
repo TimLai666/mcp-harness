@@ -85,23 +85,21 @@ func TestSQLiteStoreImportsLegacyFilesOnce(t *testing.T) {
 func TestSQLiteStorePersistsProjectApprovalHistoryAndSessions(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MCP_HARNESS_HOME", home)
+	t.Setenv(accessModeEnv, string(AccessFullAccess))
 	if _, err := (ProjectRegistry{}).Add(home, "Home", "home", "", ModeWork); err != nil {
 		t.Fatal(err)
 	}
-	res, err := NewRuntime().Run(context.Background(), RunRequest{
-		Project:    "home",
-		Mode:       ModeWork,
-		AccessMode: AccessFullAccess,
-		SessionID:  "sqlite-session",
-		Message: `<harness_tool_call>
-{"tool":"workspace.write_file","args":{"path":"note.txt","content":"hello"}}
-</harness_tool_call>`,
+	res, err := NewRuntime().ExecuteTool(context.Background(), ToolCallRequest{
+		Tool:      "workspace.write_file",
+		Project:   "home",
+		SessionID: "sqlite-session",
+		Args:      map[string]any{"path": "note.txt", "content": "hello"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.HistoryEvents) != 1 {
-		t.Fatalf("expected history event, got %#v", res.HistoryEvents)
+	if res.HistoryEvent == nil {
+		t.Fatalf("expected history event, got %#v", res)
 	}
 	store, err := DefaultStore()
 	if err != nil {

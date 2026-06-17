@@ -218,9 +218,7 @@ func ValidateToolArgs(tool string, args map[string]any, schemas map[string]ToolS
 		}
 	}
 	allowed := map[string]bool{
-		"approval_id":     true,
-		"user_authorized": true,
-		"approval_reason": true,
+		"approval_id": true,
 	}
 	for key := range schema.Args {
 		allowed[key] = true

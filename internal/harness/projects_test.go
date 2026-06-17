@@ -25,22 +25,21 @@ func TestDefaultSkillRootsIncludesUserAgentsSkills(t *testing.T) {
 func TestProjectCreateToolCreatesPersistentWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MCP_HARNESS_HOME", home)
-	res, err := NewRuntime().Run(context.Background(), RunRequest{
-		AccessMode: AccessFullAccess,
-		SessionID:  "project-create",
-		Message: `<harness_tool_call>
-{"tool":"project.create","args":{"name":"Demo Workspace","project_id":"demo","allowed_toolsets":["workspace","git"]}}
-</harness_tool_call>`,
+	t.Setenv(accessModeEnv, string(AccessFullAccess))
+	res, err := NewRuntime().ExecuteTool(context.Background(), ToolCallRequest{
+		Tool:      "project.create",
+		SessionID: "project-create",
+		Args:      map[string]any{"name": "Demo Workspace", "project_id": "demo", "allowed_toolsets": []any{"workspace", "git"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Observations) != 1 || res.Observations[0].Status != "ok" {
-		t.Fatalf("expected ok project.create observation, got %#v", res.Observations)
+	if res.Status != "ok" {
+		t.Fatalf("expected ok project.create result, got %#v", res)
 	}
-	result, ok := res.Observations[0].Result.(map[string]any)
+	result, ok := res.Result.(map[string]any)
 	if !ok {
-		t.Fatalf("expected map result, got %#v", res.Observations[0].Result)
+		t.Fatalf("expected map result, got %#v", res.Result)
 	}
 	project, ok := result["project"].(Project)
 	if !ok {
@@ -68,17 +67,16 @@ func TestProjectCreateToolCreatesPersistentWorkspace(t *testing.T) {
 func TestProjectCreateRequiresApprovalByDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MCP_HARNESS_HOME", home)
-	res, err := NewRuntime().Run(context.Background(), RunRequest{
+	res, err := NewRuntime().ExecuteTool(context.Background(), ToolCallRequest{
+		Tool:      "project.create",
 		SessionID: "project-create-approval",
-		Message: `<harness_tool_call>
-{"tool":"project.create","args":{"name":"Needs Approval","project_id":"needs-approval"}}
-</harness_tool_call>`,
+		Args:      map[string]any{"name": "Needs Approval", "project_id": "needs-approval"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Observations) != 1 || res.Observations[0].Status != "approval_required" {
-		t.Fatalf("expected approval_required, got %#v", res.Observations)
+	if res.Status != "approval_required" {
+		t.Fatalf("expected approval_required, got %#v", res)
 	}
 	projects, err := (ProjectRegistry{}).List()
 	if err != nil {
@@ -111,22 +109,21 @@ func TestProjectCloneToolClonesAndRegistersWorkspace(t *testing.T) {
 	runGit(t, source, "add", "README.md")
 	runGit(t, source, "commit", "-m", "init")
 
-	res, err := NewRuntime().Run(context.Background(), RunRequest{
-		AccessMode: AccessFullAccess,
-		SessionID:  "project-clone",
-		Message: `<harness_tool_call>
-{"tool":"project.clone","args":{"repo_url":"` + filepath.ToSlash(source) + `","project_id":"cloned","timeout_ms":60000}}
-</harness_tool_call>`,
+	t.Setenv(accessModeEnv, string(AccessFullAccess))
+	res, err := NewRuntime().ExecuteTool(context.Background(), ToolCallRequest{
+		Tool:      "project.clone",
+		SessionID: "project-clone",
+		Args:      map[string]any{"repo_url": filepath.ToSlash(source), "project_id": "cloned", "timeout_ms": 60000},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Observations) != 1 || res.Observations[0].Status != "ok" {
-		t.Fatalf("expected ok project.clone observation, got %#v", res.Observations)
+	if res.Status != "ok" {
+		t.Fatalf("expected ok project.clone result, got %#v", res)
 	}
-	result, ok := res.Observations[0].Result.(CloneResult)
+	result, ok := res.Result.(CloneResult)
 	if !ok {
-		t.Fatalf("expected CloneResult, got %#v", res.Observations[0].Result)
+		t.Fatalf("expected CloneResult, got %#v", res.Result)
 	}
 	if result.Project.ID != "cloned" || result.Project.DefaultMode != ModeWork {
 		t.Fatalf("unexpected clone result: %#v", result)

@@ -4,16 +4,18 @@
 
 ## 專案定位
 
-`mcp-harness` 要做的是一個本機 MCP Server，讓 ChatGPT、Claude 或其他外部遠端 agent 操作本機專案。`harness()` 是唯一會執行本機工作流的 direct MCP tool；其他 direct MCP tools 只提供查詢與控制台狀態。
+`mcp-harness` 要做的是一個本機 MCP Server，讓 ChatGPT、Claude 或其他外部遠端 agent 操作本機專案。每個能力都是獨立、有結構化參數的 direct MCP tool（`workspace_*`、`terminal_run`、`git_*`、`project_*`、`use_skill`、`mcp_*`、`history_*`）。`harness` 本身只回傳協議 prompt 與環境概況，不執行任何本機工作。
+
+不要再使用 DSL：不要把能力包成一個吃自然語言的 `harness(message)`，也不要在訊息裡塞 `<harness_tool_call>` JSON block。OpenAI 等平台的安全層會把這種「萬能本機執行器」形狀擋掉。能力要拆成名稱明確、參數結構化的窄工具。
 
 核心邊界：
 
 - 外部 agent 負責推理與規劃。
 - `mcp-harness` 負責本機執行、檔案操作、工具註冊、skills 載入、專案邊界、audit log。
-- 每個 harness tool call 都要記錄 history 與 step-level diff；即使檔案是被 `terminal.run` 改到，也要由前後 snapshot 算出 diff。
+- 每個會改檔的 tool call 都要記錄 history 與 step-level diff；即使檔案是被 `terminal_run` 改到，也要由前後 snapshot 算出 diff。
 - Harness 本身不內建模型。
-- Web UI 是控制台，用來管理 projects、sessions、toolsets、skills、approvals，不是行銷頁，也不是聊天或任務輸入介面。
-- Direct MCP tools 可以暴露查詢型能力，例如 projects、skills、MCP server list、approvals list、history list/show、restore preview；會改檔、跑 shell、真正 restore version、修改 MCP 設定、或呼叫外部 MCP server 的能力要留在 `harness()` 內，走 mode、approval、history/diff。
+- Web UI 是控制台，用來管理 projects、sessions、toolsets、skills、approvals、access policy，不是行銷頁，也不是聊天或任務輸入介面。
+- 權限控制在 Web UI / 伺服器端：operator 設定 access policy（`default` 或 `full_access`），agent 不能用參數自行提權，也沒有 access-mode 參數。高風險操作預設進 approval queue。
 
 ## 目前檔案
 
@@ -49,31 +51,24 @@
 - 實作前先把介面與安全邊界寫清楚。
 - 文件要區分「已完成」、「預計」、「尚未實作」。
 - 不要用 mock 或概念描述包裝成已驗證功能。
-- 修改 prompt 時，要同時考慮 parser 是否能穩定實作。
-- 修改 harness tool call 格式時，要同步更新 README 與 `prompts/main.md`。
-- 修改 access mode、history、MCP、skills hot-reload 行為時，要同步更新 README 與 `prompts/main.md`。
+- 新增或修改 direct MCP tool 時，要同步更新 README 與 `prompts/main.md`。
+- 修改 access policy、history、MCP、skills hot-reload 行為時，要同步更新 README 與 `prompts/main.md`。
 
-## Harness Tool Call 設計規則
+## Direct MCP Tool 設計規則
 
-目前 canonical tool call 是：
-
-```text
-<harness_tool_call>
-{"tool":"toolset.tool","args":{"key":"value"}}
-</harness_tool_call>
-```
+每個能力是一個 direct MCP tool，由 `internal/mcpserver/server.go` 註冊，參數用 Go struct 定義、由 SDK 反射成 input schema。
 
 維護時請遵守：
 
-- opening tag 與 closing tag 必須各自獨立一行。
-- block body 必須是單一 JSON object。
-- JSON 固定使用 `tool` 與 `args`。
-- `tool` 採 `toolset.tool`，兩段都只用小寫英數與底線。
-- `args` 只接受 JSON object，不接受 positional args。
-- tool call block 不能混入說明文字或 markdown code fence。
-- parser 必須做 JSON decode 與 schema validation。
+- tool 名稱用小寫英數與底線，動詞或 `namespace_動作` 形式，要能一眼看出它做什麼，例如 `workspace_read_file`、`project_clone`、`use_skill`。
+- 不要做吃自然語言任務的萬能工具；唯一的 shell 入口是 `terminal_run`，只接受單一 `command`，不要再開 `script`、`args`、`terminal_input` 這類任意執行介面。
+- 不要暴露 `access_mode`、`full_access`、`user_authorized` 這類讓 agent 自行提權的參數。權限由伺服器端 access policy 與 approval queue 控制。
+- 公開的 MCP tool 名稱（底線式）對應內部 toolset 名稱（`toolset.tool` 點式）；`exec()` 負責轉換，內部 registry、schema、history 仍用點式名稱。
+- 高風險工具要支援 `approval_id`：未核准時回傳 `approval_required`，operator 在 Web UI 核准後，agent 用相同參數加上 `approval_id` 重打。
+- 每個工具的參數仍要走 `ValidateToolArgs` 的 schema 驗證。
+- `harness` tool 只回傳 prompt 與概況，永遠不執行本機工作。
 
-不要把 tool call 改成 markdown code block、自然語言格式或括號式格式，除非已經同步設計 parser 與誤判防護。
+不要把能力重新包回 DSL、`message` 自然語言或 `<harness_tool_call>` block。
 
 ## 參考來源
 

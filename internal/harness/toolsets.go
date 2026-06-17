@@ -26,6 +26,8 @@ type ToolsetRegistry struct {
 	handlers  map[string]func(context.Context, map[string]any) (any, error)
 }
 
+// NewToolsetRegistry builds the local tool registry. access is the server-side
+// permission policy resolved by the operator, not anything the agent supplies.
 func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry, sessionID string, access AccessMode) *ToolsetRegistry {
 	if access == "" {
 		access = AccessDefault
@@ -98,9 +100,7 @@ func (r *ToolsetRegistry) Execute(ctx context.Context, call HarnessCall) (observ
 	}
 	if reason := r.approvalReason(call); reason != "" {
 		if r.access == AccessFullAccess {
-			// Continue and execute. The observation records the actual tool result.
-		} else if r.access == AccessAuto && autoApproved(call.Args) {
-			// Continue and execute. The caller supplied an explicit audit reason.
+			// Operator policy grants full access; execute and record the result.
 		} else if approvalID := getString(call.Args, "approval_id", ""); approvalID == "" || !r.approval.IsApproved(approvalID, r.sessionID, call.Tool, call.Args) {
 			record, err := r.approval.Create(r.sessionID, r.workspace, call, reason)
 			if err != nil {
@@ -112,7 +112,7 @@ func (r *ToolsetRegistry) Execute(ctx context.Context, call HarnessCall) (observ
 				Status: "approval_required",
 				Result: map[string]any{
 					"approval": record,
-					"message":  "Operation queued for Web UI approval. Re-run the same call with approval_id after approval.",
+					"message":  "Operation queued for Web UI approval. After an operator approves it there, call the same tool again with approval_id set to the returned approval id.",
 				},
 			}
 		}
@@ -162,10 +162,6 @@ func (r *ToolsetRegistry) approvalReason(call HarnessCall) string {
 		}
 	}
 	return ""
-}
-
-func autoApproved(args map[string]any) bool {
-	return getBool(args, "user_authorized", false) && strings.TrimSpace(getString(args, "approval_reason", "")) != ""
 }
 
 func (r *ToolsetRegistry) workspaceListFiles(ctx context.Context, args map[string]any) (any, error) {

@@ -34,10 +34,23 @@ func TestMCPServerListsAndCallsHarnessTools(t *testing.T) {
 	for _, tool := range tools.Tools {
 		gotTools[tool.Name] = true
 	}
-	for _, name := range []string{"harness", "project_list", "skill_list", "mcp_list", "approval_list", "history_list", "history_show", "history_restore_preview"} {
+	for _, name := range []string{
+		"harness", "project_list", "list_skills", "mcp_list", "approval_list",
+		"history_list", "history_show", "history_restore_preview",
+		"workspace_list_files", "workspace_read_file", "workspace_write_file",
+		"terminal_run", "git_status", "use_skill", "mcp_call", "history_restore",
+	} {
 		if !gotTools[name] {
 			t.Fatalf("expected tool %q in MCP server list, got %#v", name, gotTools)
 		}
+	}
+
+	guide, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "harness", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsJSON(t, guide, "instructions") {
+		t.Fatalf("expected harness guide result, got %#v", guide)
 	}
 
 	projectList, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "project_list", Arguments: map[string]any{}})
@@ -49,19 +62,14 @@ func TestMCPServerListsAndCallsHarnessTools(t *testing.T) {
 	}
 
 	run, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name: "harness",
-		Arguments: map[string]any{
-			"session_id": "mcp-e2e",
-			"message": `<harness_tool_call>
-{"tool":"workspace.list_files","args":{"path":".","max_entries":5}}
-</harness_tool_call>`,
-		},
+		Name:      "workspace_list_files",
+		Arguments: map[string]any{"session_id": "mcp-e2e", "path": ".", "max_entries": 5},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !containsJSON(t, run, `"status":"ok"`) || !containsJSON(t, run, "workspace.list_files") {
-		t.Fatalf("expected harness tool call result, got %#v", run)
+		t.Fatalf("expected workspace_list_files result, got %#v", run)
 	}
 }
 

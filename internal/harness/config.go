@@ -7,9 +7,55 @@ import (
 )
 
 const appDirEnv = "MCP_HARNESS_HOME"
+const accessModeEnv = "MCP_HARNESS_ACCESS_MODE"
+const accessModeSettingKey = "access_mode"
 
 type projectsFile struct {
 	Projects []Project `json:"projects"`
+}
+
+// CurrentAccessMode resolves the server-side access policy. The agent cannot
+// set this; it is controlled by the operator through the Web UI (persisted in
+// the settings table) with an environment-variable fallback. When nothing is
+// configured the policy is `default`, which routes high-risk operations into
+// the approval queue.
+func CurrentAccessMode() AccessMode {
+	if store, err := DefaultStore(); err == nil {
+		if value, ok, err := store.GetSetting(accessModeSettingKey); err == nil && ok {
+			if mode := normalizeAccessMode(value); mode != "" {
+				return mode
+			}
+		}
+	}
+	if mode := normalizeAccessMode(os.Getenv(accessModeEnv)); mode != "" {
+		return mode
+	}
+	return AccessDefault
+}
+
+// SetAccessMode persists the operator's access policy. Only `default` and
+// `full_access` are accepted; the agent never calls this.
+func SetAccessMode(mode AccessMode) error {
+	normalized := normalizeAccessMode(string(mode))
+	if normalized == "" {
+		return errors.New("invalid access mode: must be default or full_access")
+	}
+	store, err := DefaultStore()
+	if err != nil {
+		return err
+	}
+	return store.SetSetting(accessModeSettingKey, string(normalized))
+}
+
+func normalizeAccessMode(value string) AccessMode {
+	switch AccessMode(value) {
+	case AccessDefault:
+		return AccessDefault
+	case AccessFullAccess:
+		return AccessFullAccess
+	default:
+		return ""
+	}
 }
 
 func AppDir() (string, error) {

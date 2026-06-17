@@ -9,11 +9,15 @@ const (
 	ModeWork    Mode = "work"
 )
 
+// AccessMode is the server-side permission policy. It is set by the operator
+// through the Web UI, never by the calling agent.
 type AccessMode string
 
 const (
-	AccessDefault    AccessMode = "default"
-	AccessAuto       AccessMode = "auto"
+	// AccessDefault routes high-risk operations into the Web UI approval queue.
+	AccessDefault AccessMode = "default"
+	// AccessFullAccess lets high-risk operations execute directly. The operator
+	// opts into this from the Web UI when they are supervising the session.
 	AccessFullAccess AccessMode = "full_access"
 )
 
@@ -53,6 +57,44 @@ type HarnessCall struct {
 	Tool  string         `json:"tool"`
 	Args  map[string]any `json:"args"`
 	Raw   string         `json:"raw"`
+}
+
+// ToolCallRequest is one direct tool invocation from an external agent. Each
+// MCP tool maps to a single ToolCallRequest; there is no batching DSL.
+type ToolCallRequest struct {
+	Tool      string         `json:"tool"`
+	Project   string         `json:"project,omitempty"`
+	SessionID string         `json:"session_id,omitempty"`
+	Args      map[string]any `json:"args,omitempty"`
+}
+
+// GuideResult is what the prompt-only `harness` tool returns: the protocol
+// instructions plus lightweight orientation so the agent can discover context.
+type GuideResult struct {
+	Instructions        string               `json:"instructions"`
+	AccessMode          AccessMode           `json:"access_mode"`
+	CurrentProject      *Project             `json:"current_project,omitempty"`
+	WorkspaceRoot       string               `json:"workspace_root,omitempty"`
+	Mode                Mode                 `json:"mode,omitempty"`
+	SandboxPath         string               `json:"sandbox_path,omitempty"`
+	Projects            []Project            `json:"projects"`
+	Skills              []SkillSpec          `json:"skills"`
+	ProjectInstructions []ProjectInstruction `json:"project_instructions,omitempty"`
+}
+
+// ToolCallResult is the structured outcome of a single direct tool invocation.
+type ToolCallResult struct {
+	SessionID     string        `json:"session_id"`
+	Tool          string        `json:"tool"`
+	Status        string        `json:"status"`
+	Result        any           `json:"result,omitempty"`
+	Error         string        `json:"error,omitempty"`
+	Project       *Project      `json:"project,omitempty"`
+	WorkspaceRoot string        `json:"workspace_root"`
+	Mode          Mode          `json:"mode"`
+	AccessMode    AccessMode    `json:"access_mode"`
+	ActiveSkills  []string      `json:"active_skills,omitempty"`
+	HistoryEvent  *HistoryEvent `json:"history_event,omitempty"`
 }
 
 type Observation struct {

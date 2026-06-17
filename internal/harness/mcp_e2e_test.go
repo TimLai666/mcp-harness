@@ -39,33 +39,32 @@ func TestMCPCallValidatesExternalToolSchema(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv(accessModeEnv, string(AccessFullAccess))
 	rt := NewRuntime()
-	res, err := rt.Run(context.Background(), RunRequest{
+	res, err := rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool:      "mcp.call",
 		SessionID: "mcp-schema",
-		Message: `<harness_tool_call>
-{"tool":"mcp.call","args":{"server":"schema","tool":"greet","arguments":{"extra":true},"timeout_ms":5000}}
-</harness_tool_call>`,
+		Args:      map[string]any{"server": "schema", "tool": "greet", "arguments": map[string]any{"extra": true}, "timeout_ms": 5000},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Observations) != 1 || res.Observations[0].Status != "error" || !strings.Contains(res.Observations[0].Error, "$.name is required") {
-		t.Fatalf("expected local schema validation error, got %#v", res.Observations)
+	if res.Status != "error" || !strings.Contains(res.Error, "$.name is required") {
+		t.Fatalf("expected local schema validation error, got %#v", res)
 	}
 
-	res, err = rt.Run(context.Background(), RunRequest{
+	res, err = rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool:      "mcp.call",
 		SessionID: "mcp-schema",
-		Message: `<harness_tool_call>
-{"tool":"mcp.call","args":{"server":"schema","tool":"greet","arguments":{"name":"Ada"},"timeout_ms":5000}}
-</harness_tool_call>`,
+		Args:      map[string]any{"server": "schema", "tool": "greet", "arguments": map[string]any{"name": "Ada"}, "timeout_ms": 5000},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Observations) != 1 || res.Observations[0].Status != "ok" {
-		t.Fatalf("expected valid external MCP call to pass, got %#v", res.Observations)
+	if res.Status != "ok" {
+		t.Fatalf("expected valid external MCP call to pass, got %#v", res)
 	}
-	data, err := json.Marshal(res.Observations[0].Result)
+	data, err := json.Marshal(res.Result)
 	if err != nil {
 		t.Fatal(err)
 	}

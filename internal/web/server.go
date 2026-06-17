@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -63,18 +62,22 @@ func NewHandler() http.Handler {
 		}
 		writeJSON(w, map[string]any{"project": project})
 	})
-	mux.HandleFunc("POST /api/harness", func(w http.ResponseWriter, r *http.Request) {
-		var req harness.RunRequest
+	mux.HandleFunc("GET /api/settings/access-mode", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"access_mode": harness.CurrentAccessMode()})
+	})
+	mux.HandleFunc("POST /api/settings/access-mode", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AccessMode harness.AccessMode `json:"access_mode"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, err)
 			return
 		}
-		res, err := rt.Run(context.Background(), req)
-		if err != nil {
+		if err := harness.SetAccessMode(req.AccessMode); err != nil {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, res)
+		writeJSON(w, map[string]any{"access_mode": harness.CurrentAccessMode()})
 	})
 	mux.HandleFunc("GET /api/approvals", func(w http.ResponseWriter, r *http.Request) {
 		records, err := (harness.ApprovalStore{}).List()
@@ -318,6 +321,15 @@ const indexHTML = `<!doctype html>
     <section>
       <h2>Details</h2>
       <div id="detail" class="card muted">Select a session, tool call, history event, or approval.</div>
+      <h3>Access Policy</h3>
+      <div class="card">
+        <small class="muted">Operator-controlled. Agents cannot change this.</small>
+        <label>Mode</label>
+        <select id="accessMode" onchange="setAccessMode()">
+          <option value="default">default (queue high-risk ops for approval)</option>
+          <option value="full_access">full_access (run high-risk ops directly)</option>
+        </select>
+      </div>
       <h3>Approvals</h3>
       <div id="approvals"></div>
       <h3>MCP Servers</h3>
@@ -483,10 +495,22 @@ const indexHTML = `<!doctype html>
       setDetail(await res.json());
       await refreshProjects();
     }
+    async function refreshAccessMode() {
+      const res = await fetch('/api/settings/access-mode');
+      const data = await res.json();
+      if (data.access_mode) document.getElementById('accessMode').value = data.access_mode;
+    }
+    async function setAccessMode() {
+      const value = document.getElementById('accessMode').value;
+      const res = await fetch('/api/settings/access-mode', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({access_mode:value}) });
+      const data = await res.json();
+      if (data.access_mode) document.getElementById('accessMode').value = data.access_mode;
+    }
     refreshProjects();
     refreshApprovals();
     refreshMCPs();
     refreshSkills();
+    refreshAccessMode();
   </script>
 </body>
 </html>`
