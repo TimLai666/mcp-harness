@@ -8,6 +8,8 @@ services:
       MCP_HARNESS_HOME: /data
       MCP_HARNESS_WEB_ADDR: :8765
       HOME: /root
+      # Set this before exposing /mcp outside a trusted network.
+      # MCP_HARNESS_MCP_BEARER_TOKEN: change-me
     volumes:
       - mcp-harness-data:/data
       - mcp-harness-agents-skills:/root/.agents/skills

@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/TimLai666/mcp-harness/internal/harness"
+	"github.com/TimLai666/mcp-harness/internal/mcpserver"
 )
+
+const mcpEndpoint = "/mcp"
 
 func ListenAndServe(addr string) error {
 	return http.ListenAndServe(addr, NewHandler())
@@ -17,12 +21,19 @@ func NewHandler() http.Handler {
 	rt := harness.NewRuntime()
 	projects := harness.ProjectRegistry{}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+	mcpHandler := mcpserver.StreamableHTTPHandler(rt, os.Getenv("MCP_HARNESS_MCP_BEARER_TOKEN"))
+	mux.Handle(mcpEndpoint, mcpHandler)
+	mux.Handle(mcpEndpoint+"/", mcpHandler)
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(indexHTML))
 	})
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"ok": true})
+		writeJSON(w, map[string]any{
+			"ok":            true,
+			"mcp_endpoint":  mcpEndpoint,
+			"mcp_transport": "streamable_http",
+		})
 	})
 	mux.HandleFunc("GET /api/projects", func(w http.ResponseWriter, r *http.Request) {
 		list, err := projects.List()

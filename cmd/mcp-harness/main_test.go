@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/TimLai666/mcp-harness/internal/harness"
+	"github.com/TimLai666/mcp-harness/internal/mcpserver"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestMCPServerListsAndCallsHarnessTools(t *testing.T) {
 	t.Setenv("MCP_HARNESS_HOME", t.TempDir())
 	ctx := context.Background()
-	server := newServer(harness.NewRuntime())
+	server := mcpserver.New(harness.NewRuntime())
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, serverTransport, nil); err != nil {
 		t.Fatal(err)

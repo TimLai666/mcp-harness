@@ -1,12 +1,16 @@
 package web
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestConsoleHTMLHasNoChatHarnessRunner(t *testing.T) {
@@ -68,4 +72,100 @@ func TestConsoleAPISmoke(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(os.Getenv("MCP_HARNESS_HOME"), "harness.db")); err != nil {
 		t.Fatalf("expected SQLite DB to be created: %v", err)
 	}
+}
+
+func TestRemoteMCPEndpointListsAndCallsTools(t *testing.T) {
+	t.Setenv("MCP_HARNESS_HOME", t.TempDir())
+
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	ctx := context.Background()
+	client := mcp.NewClient(&mcp.Implementation{Name: "web-test-client", Version: "0.1.0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             server.URL + "/mcp",
+		MaxRetries:           -1,
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	tools, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotTools := map[string]bool{}
+	for _, tool := range tools.Tools {
+		gotTools[tool.Name] = true
+	}
+	if !gotTools["harness"] || !gotTools["project_list"] {
+		t.Fatalf("expected remote MCP tools, got %#v", gotTools)
+	}
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "project_list",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsJSON(t, result, "projects") {
+		t.Fatalf("expected project_list structured result, got %#v", result)
+	}
+}
+
+func TestRemoteMCPEndpointCanRequireBearerToken(t *testing.T) {
+	t.Setenv("MCP_HARNESS_HOME", t.TempDir())
+	t.Setenv("MCP_HARNESS_MCP_BEARER_TOKEN", "secret")
+
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	res, err := http.Post(server.URL+"/mcp", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusUnauthorized {
+		_ = res.Body.Close()
+		t.Fatalf("expected unauthorized without token, got %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "web-auth-test-client", Version: "0.1.0"}, nil)
+	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
+		Endpoint:             server.URL + "/mcp",
+		HTTPClient:           bearerHTTPClient("secret"),
+		MaxRetries:           -1,
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+}
+
+func bearerHTTPClient(token string) *http.Client {
+	return &http.Client{Transport: bearerTransport{token: token, base: http.DefaultTransport}}
+}
+
+type bearerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (t bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header.Set("Authorization", "Bearer "+t.token)
+	return t.base.RoundTrip(clone)
+}
+
+func containsJSON(t *testing.T, value any, needle string) bool {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Contains(string(data), needle)
 }
