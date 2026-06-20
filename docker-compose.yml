@@ -4,11 +4,15 @@ services:
     command: ["/app/mcp-harness-web"]
     ports:
       - "8765:8765"
+    # OIDC / multi-tenant secrets live in .env (gitignored). See .env.example.
+    # If .env is absent the app runs single-user (owner "local").
+    env_file:
+      - .env
     environment:
       MCP_HARNESS_HOME: /data
       MCP_HARNESS_WEB_ADDR: :8765
       HOME: /root
-      # Set this before exposing /mcp outside a trusted network.
+      # Single-user only; ChatGPT needs OAuth (set the OIDC vars in .env instead).
       # MCP_HARNESS_MCP_BEARER_TOKEN: change-me
     volumes:
       - mcp-harness-data:/data

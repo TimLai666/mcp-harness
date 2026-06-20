@@ -3,3 +3,5 @@ bin/
 dist/
 coverage.out
 *.exe
+.env
+!.env.example
