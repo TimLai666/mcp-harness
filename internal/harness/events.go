@@ -13,6 +13,7 @@ import (
 type Event struct {
 	Type      string `json:"type"`
 	Timestamp string `json:"timestamp"`
+	Owner     string `json:"owner,omitempty"`
 	CallID    string `json:"call_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	ProjectID string `json:"project_id,omitempty"`
@@ -33,6 +34,7 @@ const (
 	EventHistory        = "history"
 	EventApproval       = "approval"
 	EventProject        = "project"
+	EventActivity       = "activity"
 )
 
 // Broker fans out events to subscribers. Sends are non-blocking: a slow or dead
@@ -107,9 +109,12 @@ func projectIDOf(workspace Workspace) string {
 	return ""
 }
 
+func projectOwner(workspace Workspace) string { return NormalizeOwner(workspace.Owner) }
+
 func publishToolStart(callID string, workspace Workspace, sessionID, tool, command string) {
 	defaultBroker.Publish(Event{
 		Type:      EventToolStart,
+		Owner:     projectOwner(workspace),
 		CallID:    callID,
 		SessionID: sessionID,
 		ProjectID: projectIDOf(workspace),
@@ -121,6 +126,7 @@ func publishToolStart(callID string, workspace Workspace, sessionID, tool, comma
 func publishToolEnd(callID string, workspace Workspace, sessionID, tool, status, errText string) {
 	defaultBroker.Publish(Event{
 		Type:      EventToolEnd,
+		Owner:     projectOwner(workspace),
 		CallID:    callID,
 		SessionID: sessionID,
 		ProjectID: projectIDOf(workspace),
@@ -133,6 +139,7 @@ func publishToolEnd(callID string, workspace Workspace, sessionID, tool, status,
 func publishHistory(event HistoryEvent) {
 	defaultBroker.Publish(Event{
 		Type:      EventHistory,
+		Owner:     NormalizeOwner(event.Owner),
 		SessionID: event.SessionID,
 		ProjectID: event.ProjectID,
 		Tool:      event.Tool,
@@ -144,11 +151,28 @@ func publishHistory(event HistoryEvent) {
 func publishApproval(record ApprovalRecord) {
 	defaultBroker.Publish(Event{
 		Type:      EventApproval,
+		Owner:     NormalizeOwner(record.Owner),
 		SessionID: record.SessionID,
 		ProjectID: record.Project,
 		Tool:      record.Tool,
 		Status:    string(record.Status),
 		Payload:   record,
+	})
+}
+
+// PublishActivity records that an MCP tool was invoked, regardless of whether
+// the tool mutates anything. The Web UI shows this as a live feed so every MCP
+// call reflects immediately. phase is "start" (status "running") or "end"
+// (status "ok"/"error").
+func PublishActivity(owner, id, tool, phase, status, errText string) {
+	defaultBroker.Publish(Event{
+		Type:   EventActivity,
+		Owner:  NormalizeOwner(owner),
+		CallID: id,
+		Tool:   tool,
+		Data:   phase,
+		Status: status,
+		Error:  errText,
 	})
 }
 
@@ -158,6 +182,7 @@ func publishApproval(record ApprovalRecord) {
 func PublishProjectChange(action string, project *Project) {
 	ev := Event{Type: EventProject, Status: action}
 	if project != nil {
+		ev.Owner = NormalizeOwner(project.Owner)
 		ev.ProjectID = project.ID
 		ev.Payload = map[string]any{"action": action, "project": project}
 	} else {
@@ -170,6 +195,7 @@ func PublishProjectChange(action string, project *Project) {
 func PublishTerminalOutput(callID, sessionID string, workspace Workspace, command, stream, data string) {
 	defaultBroker.Publish(Event{
 		Type:      EventTerminalOutput,
+		Owner:     projectOwner(workspace),
 		CallID:    callID,
 		SessionID: sessionID,
 		ProjectID: projectIDOf(workspace),

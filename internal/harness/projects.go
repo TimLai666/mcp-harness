@@ -17,7 +17,10 @@ import (
 
 var projectIDRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
-type ProjectRegistry struct{}
+// ProjectRegistry manages one tenant's projects (zero value = default owner).
+type ProjectRegistry struct{ Owner string }
+
+func (r ProjectRegistry) owner() string { return NormalizeOwner(r.Owner) }
 
 type CloneResult struct {
 	Project    Project `json:"project"`
@@ -27,8 +30,8 @@ type CloneResult struct {
 	Stderr     string  `json:"stderr,omitempty"`
 }
 
-func (ProjectRegistry) List() ([]Project, error) {
-	return LoadProjects()
+func (r ProjectRegistry) List() ([]Project, error) {
+	return LoadProjectsFor(r.owner())
 }
 
 func (r ProjectRegistry) Add(path, name, projectID, description string, mode Mode) (Project, error) {
@@ -70,6 +73,7 @@ func (r ProjectRegistry) AddWithAllowedToolsets(path, name, projectID, descripti
 	}
 	project := Project{
 		ID:              projectID,
+		Owner:           r.owner(),
 		Name:            name,
 		Path:            abs,
 		Description:     description,
@@ -77,7 +81,7 @@ func (r ProjectRegistry) AddWithAllowedToolsets(path, name, projectID, descripti
 		AllowedToolsets: normalizeAllowedToolsets(allowedToolsets),
 	}
 	projects = append(projects, project)
-	return project, SaveProjects(projects)
+	return project, SaveProjectsFor(r.owner(), projects)
 }
 
 func (r ProjectRegistry) CreateWorkspace(name, projectID, description string, mode Mode, allowedToolsets []string) (Project, error) {
@@ -100,7 +104,7 @@ func (r ProjectRegistry) CreateWorkspace(name, projectID, description string, mo
 	if err := validateNewProjectID(projectID, projects); err != nil {
 		return Project{}, err
 	}
-	workspaces, err := WorkspacesDir()
+	workspaces, err := WorkspacesDirFor(r.owner())
 	if err != nil {
 		return Project{}, err
 	}
@@ -144,7 +148,7 @@ func (r ProjectRegistry) CloneWorkspace(ctx context.Context, repoURL, branch, na
 	if err := validateNewProjectID(projectID, projects); err != nil {
 		return CloneResult{}, err
 	}
-	workspaces, err := WorkspacesDir()
+	workspaces, err := WorkspacesDirFor(r.owner())
 	if err != nil {
 		return CloneResult{}, err
 	}
@@ -220,7 +224,7 @@ func (r ProjectRegistry) Rename(selector, newName, newDescription string) (Proje
 	if strings.TrimSpace(newDescription) != "" {
 		projects[idx].Description = newDescription
 	}
-	if err := SaveProjects(projects); err != nil {
+	if err := SaveProjectsFor(r.owner(), projects); err != nil {
 		return Project{}, err
 	}
 	return projects[idx], nil
@@ -249,7 +253,7 @@ func (r ProjectRegistry) Relocate(selector, newPath string) (Project, error) {
 		return Project{}, fmt.Errorf("unknown project: %s", selector)
 	}
 	projects[idx].Path = abs
-	if err := SaveProjects(projects); err != nil {
+	if err := SaveProjectsFor(r.owner(), projects); err != nil {
 		return Project{}, err
 	}
 	return projects[idx], nil
@@ -270,7 +274,7 @@ func (r ProjectRegistry) Remove(selector string, deleteFiles bool) (Project, boo
 	removed := projects[idx]
 	filesDeleted := false
 	if deleteFiles {
-		workspaces, err := WorkspacesDir()
+		workspaces, err := WorkspacesDirFor(r.owner())
 		if err != nil {
 			return Project{}, false, err
 		}
@@ -283,7 +287,7 @@ func (r ProjectRegistry) Remove(selector string, deleteFiles bool) (Project, boo
 		filesDeleted = true
 	}
 	projects = append(projects[:idx], projects[idx+1:]...)
-	if err := SaveProjects(projects); err != nil {
+	if err := SaveProjectsFor(r.owner(), projects); err != nil {
 		return Project{}, false, err
 	}
 	return removed, filesDeleted, nil
@@ -385,15 +389,16 @@ func gitCloneDisplayCommand(args []string) string {
 }
 
 func (r ProjectRegistry) Resolve(project string, mode Mode) (Workspace, error) {
-	sandbox, err := SandboxDir()
+	sandbox, err := SandboxDirFor(r.owner())
 	if err != nil {
 		return Workspace{}, err
 	}
+	owner := r.owner()
 	if project == "" {
 		if mode == "" {
 			mode = ModeWork
 		}
-		return Workspace{Root: sandbox, Mode: mode, SandboxPath: sandbox}, nil
+		return Workspace{Owner: owner, Root: sandbox, Mode: mode, SandboxPath: sandbox}, nil
 	}
 	projects, err := r.List()
 	if err != nil {
@@ -404,24 +409,30 @@ func (r ProjectRegistry) Resolve(project string, mode Mode) (Workspace, error) {
 			if mode == "" {
 				mode = candidate.DefaultMode
 			}
-			return Workspace{Root: candidate.Path, Project: &candidate, Mode: mode, SandboxPath: sandbox}, nil
+			return Workspace{Owner: owner, Root: candidate.Path, Project: &candidate, Mode: mode, SandboxPath: sandbox}, nil
 		}
 	}
-	abs, err := filepath.Abs(project)
-	if err == nil {
-		if info, statErr := os.Stat(abs); statErr == nil && info.IsDir() {
-			if mode == "" {
-				mode = ModeInspect
+	// Resolving an arbitrary absolute host path as a transient project is a
+	// convenience for the local single-user case only. Authenticated tenants
+	// must use registered projects so they cannot reach paths outside their
+	// own tenant.
+	if owner == DefaultOwner {
+		abs, err := filepath.Abs(project)
+		if err == nil {
+			if info, statErr := os.Stat(abs); statErr == nil && info.IsDir() {
+				if mode == "" {
+					mode = ModeInspect
+				}
+				sum := sha1.Sum([]byte(abs))
+				transient := Project{
+					ID:          "transient-" + hex.EncodeToString(sum[:])[:12],
+					Name:        filepath.Base(abs),
+					Path:        abs,
+					Description: "Transient project resolved from harness request.",
+					DefaultMode: mode,
+				}
+				return Workspace{Owner: owner, Root: abs, Project: &transient, Mode: mode, SandboxPath: sandbox}, nil
 			}
-			sum := sha1.Sum([]byte(abs))
-			transient := Project{
-				ID:          "transient-" + hex.EncodeToString(sum[:])[:12],
-				Name:        filepath.Base(abs),
-				Path:        abs,
-				Description: "Transient project resolved from harness request.",
-				DefaultMode: mode,
-			}
-			return Workspace{Root: abs, Project: &transient, Mode: mode, SandboxPath: sandbox}, nil
 		}
 	}
 	return Workspace{}, fmt.Errorf("unknown project: %s", project)

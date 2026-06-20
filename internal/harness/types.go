@@ -23,6 +23,7 @@ const (
 
 type Project struct {
 	ID              string   `json:"id"`
+	Owner           string   `json:"owner,omitempty"`
 	Name            string   `json:"name"`
 	Path            string   `json:"path"`
 	Description     string   `json:"description,omitempty"`
@@ -31,6 +32,7 @@ type Project struct {
 }
 
 type Workspace struct {
+	Owner       string   `json:"owner,omitempty"`
 	Root        string   `json:"root"`
 	Project     *Project `json:"project,omitempty"`
 	Mode        Mode     `json:"mode"`
@@ -63,6 +65,7 @@ type HarnessCall struct {
 // MCP tool maps to a single ToolCallRequest; there is no batching DSL.
 type ToolCallRequest struct {
 	Tool      string         `json:"tool"`
+	Owner     string         `json:"owner,omitempty"`
 	Project   string         `json:"project,omitempty"`
 	SessionID string         `json:"session_id,omitempty"`
 	Args      map[string]any `json:"args,omitempty"`
@@ -71,6 +74,8 @@ type ToolCallRequest struct {
 // GuideResult is what the prompt-only `harness` tool returns: the protocol
 // instructions plus lightweight orientation so the agent can discover context.
 type GuideResult struct {
+	SessionID           string               `json:"session_id"`
+	Owner               string               `json:"owner,omitempty"`
 	Instructions        string               `json:"instructions"`
 	AccessMode          AccessMode           `json:"access_mode"`
 	CurrentProject      *Project             `json:"current_project,omitempty"`
@@ -115,6 +120,7 @@ const (
 
 type ApprovalRecord struct {
 	ID        string         `json:"id"`
+	Owner     string         `json:"owner,omitempty"`
 	SessionID string         `json:"session_id"`
 	Project   string         `json:"project,omitempty"`
 	Tool      string         `json:"tool"`
@@ -189,6 +195,7 @@ type WorkspaceSnapshot struct {
 
 type WorkspaceVersion struct {
 	ID            string            `json:"id"`
+	Owner         string            `json:"owner,omitempty"`
 	Timestamp     string            `json:"timestamp"`
 	SessionID     string            `json:"session_id"`
 	ProjectID     string            `json:"project_id,omitempty"`
@@ -203,6 +210,7 @@ type WorkspaceVersion struct {
 
 type HistoryEvent struct {
 	ID             string         `json:"id"`
+	Owner          string         `json:"owner,omitempty"`
 	Timestamp      string         `json:"timestamp"`
 	SessionID      string         `json:"session_id"`
 	ProjectID      string         `json:"project_id,omitempty"`

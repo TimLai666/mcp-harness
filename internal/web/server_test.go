@@ -36,10 +36,55 @@ func TestConsoleHTMLHasNoChatHarnessRunner(t *testing.T) {
 		`new EventSource`,
 		`diff-table`,
 		`Live Terminal`,
+		`MCP Activity`,
+		`addActivity`,
+		`/api/git`,
+		`updateGitBadges`,
 	} {
 		if !strings.Contains(indexHTML, required) {
 			t.Fatalf("console HTML should contain %q", required)
 		}
+	}
+}
+
+func TestOIDCEnabledGatesAPIAndPublishesMetadata(t *testing.T) {
+	t.Setenv("MCP_HARNESS_HOME", t.TempDir())
+	t.Setenv("MCP_HARNESS_OIDC_ISSUER", "https://example.logto.app/oidc")
+	t.Setenv("MCP_HARNESS_OIDC_AUDIENCE", "mcp-harness")
+	t.Setenv("MCP_HARNESS_OIDC_CLIENT_ID", "client-123")
+	t.Setenv("MCP_HARNESS_PUBLIC_URL", "https://mcp.example.com")
+
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	// Protected-resource metadata must advertise the Logto authorization server.
+	res, err := http.Get(server.URL + "/.well-known/oauth-protected-resource")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("metadata returned %d", res.StatusCode)
+	}
+	var meta struct {
+		Resource             string   `json:"resource"`
+		AuthorizationServers []string `json:"authorization_servers"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.Resource != "https://mcp.example.com/mcp" || len(meta.AuthorizationServers) != 1 || meta.AuthorizationServers[0] != "https://example.logto.app/oidc" {
+		t.Fatalf("unexpected metadata: %#v", meta)
+	}
+
+	// Without a session cookie, the dashboard API must require login.
+	res2, err := http.Get(server.URL + "/api/projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Body.Close()
+	if res2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unauthenticated /api/projects, got %d", res2.StatusCode)
 	}
 }
 
@@ -139,9 +184,15 @@ func TestRemoteMCPEndpointListsAndCallsTools(t *testing.T) {
 		t.Fatalf("expected remote MCP tools, got %#v", gotTools)
 	}
 
+	guide, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "harness", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := sessionIDFromResult(t, guide)
+
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "project_list",
-		Arguments: map[string]any{},
+		Arguments: map[string]any{"session_id": sid},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -149,6 +200,22 @@ func TestRemoteMCPEndpointListsAndCallsTools(t *testing.T) {
 	if !containsJSON(t, result, "projects") {
 		t.Fatalf("expected project_list structured result, got %#v", result)
 	}
+}
+
+func sessionIDFromResult(t *testing.T, result *mcp.CallToolResult) string {
+	t.Helper()
+	for _, content := range result.Content {
+		if text, ok := content.(*mcp.TextContent); ok {
+			var payload struct {
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal([]byte(text.Text), &payload) == nil && payload.SessionID != "" {
+				return payload.SessionID
+			}
+		}
+	}
+	t.Fatal("no session_id in harness guide result")
+	return ""
 }
 
 func TestRemoteMCPEndpointCanRequireBearerToken(t *testing.T) {

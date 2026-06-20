@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
@@ -20,16 +19,40 @@ func ListenAndServe(addr string) error {
 
 func NewHandler() http.Handler {
 	rt := harness.NewRuntime()
-	projects := harness.ProjectRegistry{}
+	app := newAuthConfig()
 	mux := http.NewServeMux()
-	mcpHandler := mcpserver.StreamableHTTPHandler(rt, os.Getenv("MCP_HARNESS_MCP_BEARER_TOKEN"))
+	authOpts := mcpserver.AuthOptions{StaticBearer: app.mcpToken, ResourceMetadataURL: app.resourceMetadataURL()}
+	if app.enabled() {
+		authOpts.Verifier = app.tokenVerif
+	}
+	mcpHandler := mcpserver.StreamableHTTPHandler(rt, authOpts)
 	mux.Handle(mcpEndpoint, mcpHandler)
 	mux.Handle(mcpEndpoint+"/", mcpHandler)
+	app.registerAuthRoutes(mux)
+	// requireOwner resolves the tenant for a Web UI API request, writing a 401
+	// when OIDC is enabled and the caller is not logged in.
+	requireOwner := func(w http.ResponseWriter, r *http.Request) (string, bool) {
+		owner, ok := app.owner(r)
+		if !ok {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "login required", "login": "/auth/login"})
+		}
+		return owner, ok
+	}
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := app.owner(r); !ok {
+			http.Redirect(w, r, "/auth/login", http.StatusFound)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(indexHTML))
 	})
 	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -41,6 +64,7 @@ func NewHandler() http.Handler {
 		w.Header().Set("X-Accel-Buffering", "no")
 		events, cancel := harness.DefaultBroker().Subscribe()
 		defer cancel()
+		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, ": connected\n\n")
 		flusher.Flush()
 		heartbeat := time.NewTicker(25 * time.Second)
@@ -50,6 +74,9 @@ func NewHandler() http.Handler {
 			case <-r.Context().Done():
 				return
 			case ev := <-events:
+				if ev.Owner != "" && ev.Owner != owner {
+					continue // another tenant's event
+				}
 				data, err := json.Marshal(ev)
 				if err != nil {
 					continue
@@ -69,15 +96,39 @@ func NewHandler() http.Handler {
 			"mcp_transport": "streamable_http",
 		})
 	})
+	mux.HandleFunc("GET /api/auth", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := app.owner(r)
+		writeJSON(w, map[string]any{"enabled": app.enabled(), "authenticated": ok, "owner": owner, "login": "/auth/login"})
+	})
 	mux.HandleFunc("GET /api/projects", func(w http.ResponseWriter, r *http.Request) {
-		list, err := projects.List()
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		list, err := harness.ProjectRegistry{Owner: owner}.List()
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 		writeJSON(w, map[string]any{"projects": list})
 	})
+	mux.HandleFunc("GET /api/git", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		workspace, err := harness.ProjectRegistry{Owner: owner}.Resolve(r.URL.Query().Get("project"), "")
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"git": harness.WorkspaceGitInfo(workspace.Root)})
+	})
 	mux.HandleFunc("POST /api/projects", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		var req struct {
 			Path            string       `json:"path"`
 			Name            string       `json:"name"`
@@ -90,7 +141,7 @@ func NewHandler() http.Handler {
 			writeError(w, err)
 			return
 		}
-		project, err := projects.AddWithAllowedToolsets(req.Path, req.Name, req.ProjectID, req.Description, req.DefaultMode, req.AllowedToolsets)
+		project, err := harness.ProjectRegistry{Owner: owner}.AddWithAllowedToolsets(req.Path, req.Name, req.ProjectID, req.Description, req.DefaultMode, req.AllowedToolsets)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -98,9 +149,17 @@ func NewHandler() http.Handler {
 		writeJSON(w, map[string]any{"project": project})
 	})
 	mux.HandleFunc("GET /api/settings/access-mode", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"access_mode": harness.CurrentAccessMode()})
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		writeJSON(w, map[string]any{"access_mode": harness.CurrentAccessModeFor(owner)})
 	})
 	mux.HandleFunc("POST /api/settings/access-mode", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		var req struct {
 			AccessMode harness.AccessMode `json:"access_mode"`
 		}
@@ -108,14 +167,18 @@ func NewHandler() http.Handler {
 			writeError(w, err)
 			return
 		}
-		if err := harness.SetAccessMode(req.AccessMode); err != nil {
+		if err := harness.SetAccessModeFor(owner, req.AccessMode); err != nil {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, map[string]any{"access_mode": harness.CurrentAccessMode()})
+		writeJSON(w, map[string]any{"access_mode": harness.CurrentAccessModeFor(owner)})
 	})
 	mux.HandleFunc("GET /api/approvals", func(w http.ResponseWriter, r *http.Request) {
-		records, err := (harness.ApprovalStore{}).List()
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		records, err := harness.ApprovalStore{Owner: owner}.List()
 		if err != nil {
 			writeError(w, err)
 			return
@@ -123,6 +186,10 @@ func NewHandler() http.Handler {
 		writeJSON(w, map[string]any{"approvals": records})
 	})
 	mux.HandleFunc("POST /api/approvals/", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		id, action := splitApprovalPath(r.URL.Path)
 		status := harness.ApprovalRejected
 		if action == "approve" {
@@ -131,7 +198,7 @@ func NewHandler() http.Handler {
 			writeError(w, http.ErrNotSupported)
 			return
 		}
-		record, err := (harness.ApprovalStore{}).SetStatus(id, status)
+		record, err := harness.ApprovalStore{Owner: owner}.SetStatus(id, status)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -139,7 +206,11 @@ func NewHandler() http.Handler {
 		writeJSON(w, map[string]any{"approval": record})
 	})
 	mux.HandleFunc("GET /api/mcps", func(w http.ResponseWriter, r *http.Request) {
-		servers, err := harness.LoadMCPServers()
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		servers, err := harness.LoadMCPServersFor(owner)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -147,31 +218,46 @@ func NewHandler() http.Handler {
 		writeJSON(w, map[string]any{"servers": servers})
 	})
 	mux.HandleFunc("POST /api/mcps", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		var config harness.MCPServerConfig
 		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
 			writeError(w, err)
 			return
 		}
-		if err := harness.AddMCPServer(config); err != nil {
+		if err := harness.AddMCPServerFor(owner, config); err != nil {
 			writeError(w, err)
 			return
 		}
 		writeJSON(w, map[string]any{"server": config})
 	})
 	mux.HandleFunc("DELETE /api/mcps/", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		id := r.URL.Path[len("/api/mcps/"):]
-		if err := harness.DeleteMCPServer(id); err != nil {
+		if err := harness.DeleteMCPServerFor(owner, id); err != nil {
 			writeError(w, err)
 			return
 		}
 		writeJSON(w, map[string]any{"removed": id})
 	})
 	mux.HandleFunc("GET /api/skills", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := requireOwner(w, r); !ok {
+			return
+		}
 		writeJSON(w, map[string]any{"skills": harness.NewSkillRegistry().List()})
 	})
 	mux.HandleFunc("GET /api/sessions", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		store, err := harness.DefaultStore()
+		store, err := harness.DefaultStoreFor(owner)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -184,8 +270,12 @@ func NewHandler() http.Handler {
 		writeJSON(w, map[string]any{"sessions": sessions})
 	})
 	mux.HandleFunc("GET /api/sessions/", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		id := r.URL.Path[len("/api/sessions/"):]
-		store, err := harness.DefaultStore()
+		store, err := harness.DefaultStoreFor(owner)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -198,7 +288,11 @@ func NewHandler() http.Handler {
 		writeJSON(w, map[string]any{"session": session, "turns": turns})
 	})
 	mux.HandleFunc("GET /api/tool-calls", func(w http.ResponseWriter, r *http.Request) {
-		store, err := harness.DefaultStore()
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		store, err := harness.DefaultStoreFor(owner)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -211,8 +305,12 @@ func NewHandler() http.Handler {
 		writeJSON(w, map[string]any{"tool_calls": calls})
 	})
 	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		events, err := harness.ListHistoryEvents(r.URL.Query().Get("project_id"), r.URL.Query().Get("session_id"), limit, r.URL.Query().Get("include_diff") == "true")
+		events, err := harness.ListHistoryEventsFor(owner, r.URL.Query().Get("project_id"), r.URL.Query().Get("session_id"), limit, r.URL.Query().Get("include_diff") == "true")
 		if err != nil {
 			writeError(w, err)
 			return
@@ -220,8 +318,12 @@ func NewHandler() http.Handler {
 		writeJSON(w, map[string]any{"events": events})
 	})
 	mux.HandleFunc("GET /api/history/", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		id := r.URL.Path[len("/api/history/"):]
-		event, err := harness.GetHistoryEvent(id)
+		event, err := harness.GetHistoryEventFor(owner, id)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -229,6 +331,10 @@ func NewHandler() http.Handler {
 		writeJSON(w, map[string]any{"event": event})
 	})
 	mux.HandleFunc("POST /api/history/restore-preview", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		var req struct {
 			VersionID string `json:"version_id"`
 		}
@@ -236,12 +342,12 @@ func NewHandler() http.Handler {
 			writeError(w, err)
 			return
 		}
-		version, err := harness.LoadWorkspaceVersion(req.VersionID)
+		version, err := harness.LoadWorkspaceVersionFor(owner, req.VersionID)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		preview, diff, truncated, err := harness.PreviewRestoreWorkspaceVersion(version.WorkspaceRoot, req.VersionID)
+		preview, diff, truncated, err := harness.PreviewRestoreWorkspaceVersionFor(owner, version.WorkspaceRoot, req.VersionID)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -249,6 +355,10 @@ func NewHandler() http.Handler {
 		writeJSON(w, map[string]any{"version": preview, "diff": diff, "diff_truncated": truncated})
 	})
 	mux.HandleFunc("POST /api/history/restore", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
 		var req struct {
 			VersionID string `json:"version_id"`
 		}
@@ -256,12 +366,12 @@ func NewHandler() http.Handler {
 			writeError(w, err)
 			return
 		}
-		version, err := harness.LoadWorkspaceVersion(req.VersionID)
+		version, err := harness.LoadWorkspaceVersionFor(owner, req.VersionID)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		restored, diff, truncated, err := harness.RestoreWorkspaceVersion(version.WorkspaceRoot, req.VersionID)
+		restored, diff, truncated, err := harness.RestoreWorkspaceVersionFor(owner, version.WorkspaceRoot, req.VersionID)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -342,6 +452,9 @@ const indexHTML = `<!doctype html>
     .diff-table td.add.ln { background:#10391f; color:#7fb98f; }
     .diff-table td.hunk { background:#161b22; color:#6e7681; padding:1px 8px; }
     .diff-meta { color:var(--muted); font-size:12px; margin:2px 0 6px; }
+    .gitline { margin-top:4px; font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; }
+    .gitline:empty { display:none; }
+    .gitline .branch { color:var(--text); }
     #terminal .hljs { background:transparent; padding:0; }
   </style>
 </head>
@@ -349,6 +462,7 @@ const indexHTML = `<!doctype html>
   <div class="shell">
     <aside>
       <h1>mcp-harness</h1>
+      <div id="authbar" class="muted" style="font-size:12px;margin-bottom:8px"></div>
       <h3>Projects</h3>
       <div id="projects"></div>
       <h3>Add Project</h3>
@@ -375,7 +489,9 @@ const indexHTML = `<!doctype html>
     <section>
       <h2>Details</h2>
       <div id="detail" class="card muted">Select a session, tool call, history event, or approval.</div>
-      <h3>Live Terminal <span id="liveDot" class="pill">offline</span></h3>
+      <h3>MCP Activity <span id="liveDot" class="pill">offline</span></h3>
+      <div id="activity" class="card muted">No MCP calls yet.</div>
+      <h3>Live Terminal</h3>
       <div class="card">
         <small id="terminalHeader" class="muted">Waiting for terminal_run output…</small>
         <pre id="terminal"></pre>
@@ -419,18 +535,35 @@ const indexHTML = `<!doctype html>
       list.innerHTML = '';
       const sandbox = document.createElement('div');
       sandbox.className = 'card' + (selectedProject === '' ? ' selected' : '');
-      sandbox.innerHTML = '<strong>Default sandbox</strong><small>Transient workspace</small>';
+      sandbox.innerHTML = '<strong>Default sandbox</strong><small>Transient workspace</small><small class="gitline" data-git=""></small>';
       sandbox.onclick = () => selectProject('', 'Default sandbox');
       list.appendChild(sandbox);
       for (const p of projects) {
         const div = document.createElement('div');
         div.className = 'card' + (selectedProject === p.id ? ' selected' : '');
-        div.innerHTML = '<strong>' + escapeHTML(p.name) + '</strong><small>' + escapeHTML(p.path) + '</small>';
+        div.innerHTML = '<strong>' + escapeHTML(p.name) + '</strong><small>' + escapeHTML(p.path) + '</small><small class="gitline" data-git="' + escapeHTML(p.id) + '"></small>';
         div.onclick = () => selectProject(p.id, p.name);
         list.appendChild(div);
       }
+      updateGitBadges();
       await refreshSessions();
       await refreshHistory();
+    }
+    async function updateGitBadges() {
+      for (const node of document.querySelectorAll('#projects [data-git]')) {
+        const project = node.getAttribute('data-git');
+        try {
+          const res = await fetch('/api/git?project=' + encodeURIComponent(project));
+          const g = (await res.json()).git || {};
+          if (!g.is_repo) { node.textContent = ''; continue; }
+          let html = '<span class="branch">⎇ ' + escapeHTML(g.branch || '?') + '</span>'
+            + ' <span class="ok">+' + (g.added || 0) + '</span> <span class="bad">-' + (g.removed || 0) + '</span>';
+          if (g.files_changed) html += ' <span class="muted">' + g.files_changed + ' files</span>';
+          if (g.ahead) html += ' <span class="muted">↑' + g.ahead + '</span>';
+          if (g.behind) html += ' <span class="muted">↓' + g.behind + '</span>';
+          node.innerHTML = html;
+        } catch (e) { node.textContent = ''; }
+      }
     }
     async function selectProject(id, name) {
       selectedProject = id;
@@ -642,12 +775,35 @@ const indexHTML = `<!doctype html>
       if (data.access_mode) document.getElementById('accessMode').value = data.access_mode;
     }
     let currentCall = '';
+    function nowTime() { return new Date().toLocaleTimeString(); }
+    function addActivity(id, tool) {
+      const box = document.getElementById('activity');
+      if (box.classList.contains('muted')) { box.classList.remove('muted'); box.textContent = ''; }
+      const row = document.createElement('div');
+      row.dataset.act = id;
+      row.innerHTML = '<span class="pill">running</span> <strong style="display:inline">' + escapeHTML(tool) + '</strong> <small style="display:inline" class="muted">' + nowTime() + '</small>';
+      box.prepend(row);
+      while (box.children.length > 40) box.removeChild(box.lastChild);
+    }
+    function updateActivity(id, status, error) {
+      const row = document.querySelector('#activity [data-act="' + id + '"]');
+      if (!row) return;
+      const pill = row.querySelector('.pill');
+      pill.textContent = status;
+      pill.className = 'pill ' + (status === 'error' ? 'bad' : 'ok');
+      if (error) row.title = error;
+    }
     function appendTerminal(text) {
       const pre = document.getElementById('terminal');
       pre.textContent = (pre.textContent + text).slice(-20000);
       pre.scrollTop = pre.scrollHeight;
     }
     function handleEvent(ev) {
+      if (ev.type === 'activity') {
+        if (ev.data === 'start') addActivity(ev.call_id, ev.tool);
+        else updateActivity(ev.call_id, ev.status, ev.error);
+        return;
+      }
       if (ev.type === 'tool_start' && ev.tool === 'terminal.run') {
         currentCall = ev.call_id;
         document.getElementById('terminal').textContent = '';
@@ -666,8 +822,10 @@ const indexHTML = `<!doctype html>
         refreshHistory();
         if (selectedSession) refreshToolCalls();
         refreshSessions();
+        updateGitBadges();
       } else if (ev.type === 'history') {
         refreshHistory();
+        updateGitBadges();
       } else if (ev.type === 'approval') {
         refreshApprovals();
       } else if (ev.type === 'project') {
@@ -685,7 +843,17 @@ const indexHTML = `<!doctype html>
     refreshApprovals();
     refreshMCPs();
     refreshSkills();
+    async function refreshAuth() {
+      try {
+        const data = await (await fetch('/api/auth')).json();
+        const bar = document.getElementById('authbar');
+        if (!data.enabled) { bar.textContent = ''; return; }
+        bar.innerHTML = 'Signed in as <strong style="display:inline">' + escapeHTML(data.owner || '?') + '</strong> · <a href="#" id="logout">Logout</a>';
+        document.getElementById('logout').onclick = async (e) => { e.preventDefault(); await fetch('/auth/logout', {method:'POST'}); location.href = '/auth/login'; };
+      } catch (e) {}
+    }
     refreshAccessMode();
+    refreshAuth();
     connectEvents();
   </script>
 </body>

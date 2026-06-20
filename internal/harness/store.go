@@ -45,34 +45,51 @@ var (
 	defaultStoreMu sync.Mutex
 )
 
-func DefaultStore() (Store, error) {
-	path, err := DBPath()
+func DefaultStore() (Store, error) { return DefaultStoreFor(DefaultOwner) }
+
+// DefaultStoreFor opens the SQLite store for one tenant. Each owner has an
+// isolated database under its tenant home, so isolation is structural: a query
+// for one tenant physically cannot see another tenant's rows.
+func DefaultStoreFor(owner string) (Store, error) {
+	path, err := DBPathFor(owner)
+	if err != nil {
+		return nil, err
+	}
+	home, err := TenantHome(owner)
 	if err != nil {
 		return nil, err
 	}
 	defaultStoreMu.Lock()
 	defer defaultStoreMu.Unlock()
-	return OpenSQLiteStore(path)
+	// Legacy JSON/JSONL import only applies to the default tenant's root.
+	return openSQLiteStore(path, home, NormalizeOwner(owner) == DefaultOwner)
 }
 
 type SQLiteStore struct {
 	db         *sql.DB
+	home       string
 	closeAfter bool
 }
 
+// OpenSQLiteStore opens a store at path, treating its directory as the tenant
+// home and importing legacy files on first creation. Retained for tests.
 func OpenSQLiteStore(path string) (*SQLiteStore, error) {
+	return openSQLiteStore(path, filepath.Dir(path), true)
+}
+
+func openSQLiteStore(path, home string, importLegacy bool) (*SQLiteStore, error) {
 	_, statErr := os.Stat(path)
 	fresh := errors.Is(statErr, os.ErrNotExist)
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
-	store := &SQLiteStore{db: db}
+	store := &SQLiteStore{db: db, home: home}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	if fresh {
+	if fresh && importLegacy {
 		if err := store.importLegacy(); err != nil {
 			_ = db.Close()
 			return nil, err
@@ -444,13 +461,9 @@ func (s *SQLiteStore) ListSessions(projectID string, limit int) ([]SessionRecord
 	}
 	query := `SELECT s.id, s.created_at, s.updated_at, s.project_id, s.project_name, s.workspace_root, s.mode, s.access_mode, s.active_skills_json, COUNT(t.id)
 FROM sessions s LEFT JOIN turns t ON t.session_id=s.id`
-	var rows *sql.Rows
-	var err error
-	if projectID != "" {
-		rows, err = s.db.Query(query+` WHERE s.project_id=? GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ?`, projectID, limit)
-	} else {
-		rows, err = s.db.Query(query+` GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ?`, limit)
-	}
+	// Always scope by project_id. An empty projectID means the default sandbox
+	// (sessions with no project) so it never shows other projects' sessions.
+	rows, err := s.db.Query(query+` WHERE s.project_id=? GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ?`, projectID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +523,7 @@ func (s *SQLiteStore) ListToolCalls(sessionID string) ([]ToolCallRecord, error) 
 
 func (s *SQLiteStore) SaveWorkspaceVersion(version WorkspaceVersion) error {
 	defer s.closeIfNeeded()
-	snapshotPath, err := saveSnapshotBlob(version)
+	snapshotPath, err := s.saveSnapshotBlob(version)
 	if err != nil {
 		return err
 	}
@@ -522,7 +535,7 @@ func (s *SQLiteStore) SaveWorkspaceVersion(version WorkspaceVersion) error {
 func (s *SQLiteStore) LoadWorkspaceVersion(id string) (WorkspaceVersion, error) {
 	defer s.closeIfNeeded()
 	row := s.db.QueryRow(`SELECT id, timestamp, session_id, project_id, project_name, workspace_root, mode, step, tool, label, snapshot_json, snapshot_path FROM history_versions WHERE id=?`, id)
-	version, err := scanVersion(row)
+	version, err := s.scanVersion(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WorkspaceVersion{}, fmt.Errorf("history version not found: %s", id)
 	}
@@ -632,7 +645,7 @@ func scanToolCall(s scanner) (ToolCallRecord, error) {
 	return record, nil
 }
 
-func scanVersion(s scanner) (WorkspaceVersion, error) {
+func (st *SQLiteStore) scanVersion(s scanner) (WorkspaceVersion, error) {
 	var version WorkspaceVersion
 	var snapshotJSON, snapshotPath string
 	if err := s.Scan(&version.ID, &version.Timestamp, &version.SessionID, &version.ProjectID, &version.ProjectName, &version.WorkspaceRoot, &version.Mode, &version.Step, &version.Tool, &version.Label, &snapshotJSON, &snapshotPath); err != nil {
@@ -641,7 +654,7 @@ func scanVersion(s scanner) (WorkspaceVersion, error) {
 	if snapshotJSON != "" {
 		_ = json.Unmarshal([]byte(snapshotJSON), &version.Snapshot)
 	} else if snapshotPath != "" {
-		snapshot, err := loadSnapshotBlob(snapshotPath)
+		snapshot, err := st.loadSnapshotBlob(snapshotPath)
 		if err != nil {
 			return version, err
 		}
@@ -681,8 +694,8 @@ func boolInt(value bool) int {
 	return 0
 }
 
-func saveSnapshotBlob(version WorkspaceVersion) (string, error) {
-	dir, err := HistoryBlobsDir()
+func (s *SQLiteStore) saveSnapshotBlob(version WorkspaceVersion) (string, error) {
+	dir, err := ensureDir(filepath.Join(s.home, "history", "blobs"))
 	if err != nil {
 		return "", err
 	}
@@ -707,12 +720,9 @@ func saveSnapshotBlob(version WorkspaceVersion) (string, error) {
 	return filepath.ToSlash(filepath.Join("history", "blobs", name)), nil
 }
 
-func loadSnapshotBlob(relPath string) (WorkspaceSnapshot, error) {
+func (s *SQLiteStore) loadSnapshotBlob(relPath string) (WorkspaceSnapshot, error) {
 	var snapshot WorkspaceSnapshot
-	base, err := AppDir()
-	if err != nil {
-		return snapshot, err
-	}
+	base := s.home
 	path := filepath.Clean(filepath.Join(base, filepath.FromSlash(relPath)))
 	if !strings.HasPrefix(path, filepath.Clean(base)+string(os.PathSeparator)) && filepath.Clean(path) != filepath.Clean(base) {
 		return snapshot, errors.New("snapshot blob path escapes harness home")

@@ -8,9 +8,13 @@ import (
 	"time"
 )
 
-type ApprovalStore struct{}
+// ApprovalStore reads and writes approvals for one tenant (zero value = default
+// owner / single-tenant).
+type ApprovalStore struct{ Owner string }
 
-func (ApprovalStore) Create(sessionID string, workspace Workspace, call HarnessCall, reason string) (ApprovalRecord, error) {
+func (s ApprovalStore) owner() string { return NormalizeOwner(s.Owner) }
+
+func (s ApprovalStore) Create(sessionID string, workspace Workspace, call HarnessCall, reason string) (ApprovalRecord, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	id := approvalID(sessionID, call)
 	project := ""
@@ -19,6 +23,7 @@ func (ApprovalStore) Create(sessionID string, workspace Workspace, call HarnessC
 	}
 	record := ApprovalRecord{
 		ID:        id,
+		Owner:     s.owner(),
 		SessionID: sessionID,
 		Project:   project,
 		Tool:      call.Tool,
@@ -31,19 +36,19 @@ func (ApprovalStore) Create(sessionID string, workspace Workspace, call HarnessC
 	return record, SaveApproval(record)
 }
 
-func (ApprovalStore) List() ([]ApprovalRecord, error) {
-	store, err := DefaultStore()
+func (s ApprovalStore) List() ([]ApprovalRecord, error) {
+	store, err := DefaultStoreFor(s.owner())
 	if err != nil {
 		return nil, err
 	}
 	return store.ListApprovals()
 }
 
-func (ApprovalStore) SetStatus(id string, status ApprovalStatus) (ApprovalRecord, error) {
+func (s ApprovalStore) SetStatus(id string, status ApprovalStatus) (ApprovalRecord, error) {
 	if status != ApprovalApproved && status != ApprovalRejected {
 		return ApprovalRecord{}, fmt.Errorf("invalid approval status: %s", status)
 	}
-	record, err := LoadApproval(id)
+	record, err := LoadApprovalFor(s.owner(), id)
 	if err != nil {
 		return ApprovalRecord{}, err
 	}
@@ -52,8 +57,8 @@ func (ApprovalStore) SetStatus(id string, status ApprovalStatus) (ApprovalRecord
 	return record, SaveApproval(record)
 }
 
-func (ApprovalStore) IsApproved(id, sessionID, tool string, args map[string]any) bool {
-	record, err := LoadApproval(id)
+func (s ApprovalStore) IsApproved(id, sessionID, tool string, args map[string]any) bool {
+	record, err := LoadApprovalFor(s.owner(), id)
 	if err != nil {
 		return false
 	}
@@ -66,15 +71,17 @@ func (ApprovalStore) IsApproved(id, sessionID, tool string, args map[string]any)
 }
 
 func SaveApproval(record ApprovalRecord) error {
-	store, err := DefaultStore()
+	store, err := DefaultStoreFor(NormalizeOwner(record.Owner))
 	if err != nil {
 		return err
 	}
 	return store.SaveApproval(record)
 }
 
-func LoadApproval(id string) (ApprovalRecord, error) {
-	store, err := DefaultStore()
+func LoadApproval(id string) (ApprovalRecord, error) { return LoadApprovalFor(DefaultOwner, id) }
+
+func LoadApprovalFor(owner, id string) (ApprovalRecord, error) {
+	store, err := DefaultStoreFor(owner)
 	if err != nil {
 		return ApprovalRecord{}, err
 	}

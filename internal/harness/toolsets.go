@@ -34,35 +34,44 @@ func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry, sessionID st
 	if access == "" {
 		access = AccessDefault
 	}
-	r := &ToolsetRegistry{workspace: workspace, skills: skills, sessionID: sessionID, access: access, schemas: BuiltinToolSchemas()}
+	r := &ToolsetRegistry{
+		workspace: workspace,
+		skills:    skills,
+		projects:  ProjectRegistry{Owner: workspace.Owner},
+		approval:  ApprovalStore{Owner: workspace.Owner},
+		sessionID: sessionID,
+		access:    access,
+		schemas:   BuiltinToolSchemas(),
+	}
 	r.handlers = map[string]func(context.Context, map[string]any) (any, error){
-		"workspace.list_files":  r.workspaceListFiles,
-		"workspace.read_file":   r.workspaceReadFile,
-		"workspace.search":      r.workspaceSearch,
-		"workspace.apply_patch": r.workspaceApplyPatch,
-		"workspace.write_file":  r.workspaceWriteFile,
-		"terminal.run":          r.terminalRun,
-		"git.status":            r.gitStatus,
-		"git.diff":              r.gitDiff,
-		"git.log":               r.gitLog,
-		"git.show":              r.gitShow,
-		"project.list":          r.projectList,
-		"project.current":       r.projectCurrent,
-		"project.add":           r.projectAdd,
-		"project.create":        r.projectCreate,
-		"project.clone":         r.projectClone,
-		"project.rename":        r.projectRename,
-		"project.relocate":      r.projectRelocate,
-		"project.remove":        r.projectRemove,
-		"skill.list":            r.skillList,
-		"skill.use":             r.skillUse,
-		"mcp.list":              r.mcpList,
-		"mcp.call":              r.mcpCall,
-		"mcp.add":               r.mcpAdd,
-		"mcp.remove":            r.mcpRemove,
-		"history.list":          r.historyList,
-		"history.show":          r.historyShow,
-		"history.restore":       r.historyRestore,
+		"workspace.list_files":    r.workspaceListFiles,
+		"workspace.read_file":     r.workspaceReadFile,
+		"workspace.search":        r.workspaceSearch,
+		"workspace.apply_patch":   r.workspaceApplyPatch,
+		"workspace.write_file":    r.workspaceWriteFile,
+		"workspace.replace_lines": r.workspaceReplaceLines,
+		"terminal.run":            r.terminalRun,
+		"git.status":              r.gitStatus,
+		"git.diff":                r.gitDiff,
+		"git.log":                 r.gitLog,
+		"git.show":                r.gitShow,
+		"project.list":            r.projectList,
+		"project.current":         r.projectCurrent,
+		"project.add":             r.projectAdd,
+		"project.create":          r.projectCreate,
+		"project.clone":           r.projectClone,
+		"project.rename":          r.projectRename,
+		"project.relocate":        r.projectRelocate,
+		"project.remove":          r.projectRemove,
+		"skill.list":              r.skillList,
+		"skill.use":               r.skillUse,
+		"mcp.list":                r.mcpList,
+		"mcp.call":                r.mcpCall,
+		"mcp.add":                 r.mcpAdd,
+		"mcp.remove":              r.mcpRemove,
+		"history.list":            r.historyList,
+		"history.show":            r.historyShow,
+		"history.restore":         r.historyRestore,
 	}
 	return r
 }
@@ -147,7 +156,7 @@ func (r *ToolsetRegistry) toolsetAllowed(tool string) bool {
 
 func (r *ToolsetRegistry) approvalReason(call HarnessCall) string {
 	switch call.Tool {
-	case "workspace.apply_patch", "workspace.write_file":
+	case "workspace.apply_patch", "workspace.write_file", "workspace.replace_lines":
 		return "File mutation requires approval."
 	case "history.restore":
 		return "Restoring a workspace version modifies files and requires approval."
@@ -159,7 +168,7 @@ func (r *ToolsetRegistry) approvalReason(call HarnessCall) string {
 		return "Changing MCP server configuration requires approval."
 	case "mcp.call":
 		serverID := getString(call.Args, "server", "")
-		config, err := FindMCPServer(serverID)
+		config, err := FindMCPServerFor(r.workspace.Owner, serverID)
 		if err != nil || !config.Trusted {
 			return "Calling an untrusted external MCP server requires approval."
 		}
@@ -242,14 +251,38 @@ func (r *ToolsetRegistry) workspaceReadFile(ctx context.Context, args map[string
 		offset = len(data)
 	}
 	end := min(len(data), offset+maxBytes)
-	return map[string]any{
-		"path":      Rel(r.workspace.Root, path),
-		"type":      "text",
-		"size":      len(data),
-		"offset":    offset,
-		"truncated": end < len(data),
-		"content":   string(data[offset:end]),
-	}, nil
+	shown := string(data[offset:end])
+	startLine := 1 + strings.Count(string(data[:offset]), "\n")
+	result := map[string]any{
+		"path":       Rel(r.workspace.Root, path),
+		"type":       "text",
+		"size":       len(data),
+		"offset":     offset,
+		"truncated":  end < len(data),
+		"content":    shown,
+		"start_line": startLine,
+	}
+	if getBool(args, "line_numbers", true) {
+		result["numbered_content"] = numberLines(shown, startLine)
+	}
+	return result, nil
+}
+
+// numberLines prefixes each line with its 1-based line number (cat -n style) so
+// the agent can target edits by line. start is the line number of the first line.
+func numberLines(text string, start int) string {
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	var b strings.Builder
+	for i, line := range lines {
+		fmt.Fprintf(&b, "%d\t%s\n", start+i, line)
+	}
+	return b.String()
 }
 
 func (r *ToolsetRegistry) workspaceSearch(ctx context.Context, args map[string]any) (any, error) {
@@ -328,6 +361,79 @@ func (r *ToolsetRegistry) workspaceWriteFile(ctx context.Context, args map[strin
 		return nil, err
 	}
 	return map[string]any{"path": Rel(r.workspace.Root, path), "bytes": len([]byte(content))}, nil
+}
+
+// workspaceReplaceLines replaces an inclusive 1-based line range with new
+// content, so large files can be edited in fragments instead of rewritten
+// whole. Use start_line=end_line+1 with the range pointing past content, or an
+// empty range, to insert without removing lines.
+func (r *ToolsetRegistry) workspaceReplaceLines(ctx context.Context, args map[string]any) (any, error) {
+	if r.workspace.Mode != ModeWork {
+		return nil, fmt.Errorf("workspace.replace_lines requires mode=work")
+	}
+	path, err := ResolveInside(r.workspace.Root, mustString(args, "path"))
+	if err != nil {
+		return nil, err
+	}
+	if IsSensitive(path) {
+		return nil, fmt.Errorf("refusing to edit sensitive path: %s", Rel(r.workspace.Root, path))
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if IsBinary(data) {
+		return nil, fmt.Errorf("refusing to edit binary file: %s", Rel(r.workspace.Root, path))
+	}
+	start := getInt(args, "start_line", 0)
+	end := getInt(args, "end_line", 0)
+	if start < 1 {
+		return nil, fmt.Errorf("start_line must be >= 1")
+	}
+	if end < start-1 {
+		return nil, fmt.Errorf("end_line must be >= start_line-1")
+	}
+
+	text := string(data)
+	hadTrailingNL := strings.HasSuffix(text, "\n")
+	var lines []string
+	if text != "" {
+		lines = strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	}
+	count := len(lines)
+	if start-1 > count {
+		return nil, fmt.Errorf("start_line %d is beyond end of file (%d lines)", start, count)
+	}
+	if end > count {
+		end = count
+	}
+
+	var replacement []string
+	if content := getString(args, "content", ""); content != "" {
+		replacement = strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	}
+	newLines := append([]string{}, lines[:start-1]...)
+	newLines = append(newLines, replacement...)
+	if end < count {
+		newLines = append(newLines, lines[end:]...)
+	}
+	out := strings.Join(newLines, "\n")
+	if out != "" && (hadTrailingNL || count == 0) {
+		out += "\n"
+	}
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		return nil, err
+	}
+	removed := end - start + 1
+	if removed < 0 {
+		removed = 0
+	}
+	return map[string]any{
+		"path":           Rel(r.workspace.Root, path),
+		"removed_lines":  removed,
+		"inserted_lines": len(replacement),
+		"line_count":     len(newLines),
+	}, nil
 }
 
 func (r *ToolsetRegistry) terminalRun(ctx context.Context, args map[string]any) (any, error) {
@@ -529,7 +635,7 @@ func (r *ToolsetRegistry) skillUse(ctx context.Context, args map[string]any) (an
 }
 
 func (r *ToolsetRegistry) mcpList(ctx context.Context, args map[string]any) (any, error) {
-	servers, err := LoadMCPServers()
+	servers, err := LoadMCPServersFor(r.workspace.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +663,7 @@ func (r *ToolsetRegistry) mcpCall(ctx context.Context, args map[string]any) (any
 	if arguments == nil {
 		arguments = map[string]any{}
 	}
-	config, err := FindMCPServer(serverID)
+	config, err := FindMCPServerFor(r.workspace.Owner, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -618,7 +724,7 @@ func (r *ToolsetRegistry) mcpAdd(ctx context.Context, args map[string]any) (any,
 			config.Env[key] = fmt.Sprint(value)
 		}
 	}
-	if err := AddMCPServer(config); err != nil {
+	if err := AddMCPServerFor(r.workspace.Owner, config); err != nil {
 		return nil, err
 	}
 	return map[string]any{"server": config}, nil
@@ -626,7 +732,7 @@ func (r *ToolsetRegistry) mcpAdd(ctx context.Context, args map[string]any) (any,
 
 func (r *ToolsetRegistry) mcpRemove(ctx context.Context, args map[string]any) (any, error) {
 	id := mustString(args, "id")
-	if err := DeleteMCPServer(id); err != nil {
+	if err := DeleteMCPServerFor(r.workspace.Owner, id); err != nil {
 		return nil, err
 	}
 	return map[string]any{"removed": id}, nil
@@ -637,12 +743,12 @@ func (r *ToolsetRegistry) historyList(ctx context.Context, args map[string]any) 
 	if projectID == "" && getBool(args, "current_project", false) && r.workspace.Project != nil {
 		projectID = r.workspace.Project.ID
 	}
-	events, err := ListHistoryEvents(projectID, getString(args, "session_id", ""), getInt(args, "limit", 50), getBool(args, "include_diff", false))
+	events, err := ListHistoryEventsFor(r.workspace.Owner, projectID, getString(args, "session_id", ""), getInt(args, "limit", 50), getBool(args, "include_diff", false))
 	return map[string]any{"events": events}, err
 }
 
 func (r *ToolsetRegistry) historyShow(ctx context.Context, args map[string]any) (any, error) {
-	event, err := GetHistoryEvent(mustString(args, "event_id"))
+	event, err := GetHistoryEventFor(r.workspace.Owner, mustString(args, "event_id"))
 	if err != nil {
 		return nil, err
 	}
@@ -653,7 +759,7 @@ func (r *ToolsetRegistry) historyRestore(ctx context.Context, args map[string]an
 	if r.workspace.Mode != ModeWork {
 		return nil, fmt.Errorf("history.restore requires mode=work")
 	}
-	version, diff, truncated, err := RestoreWorkspaceVersion(r.workspace.Root, mustString(args, "version_id"))
+	version, diff, truncated, err := RestoreWorkspaceVersionFor(r.workspace.Owner, r.workspace.Root, mustString(args, "version_id"))
 	if err != nil {
 		return nil, err
 	}

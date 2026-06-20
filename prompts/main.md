@@ -13,7 +13,7 @@ Each capability is its own MCP tool with a structured input schema. There is no 
 `mcp-harness` provides:
 
 - read-only discovery tools (`harness`, `project_list`, `list_skills`, `mcp_list`, `approval_list`, `history_list`, `history_show`, `history_restore_preview`)
-- workspace tools (`workspace_list_files`, `workspace_read_file`, `workspace_search`, `workspace_write_file`, `workspace_apply_patch`)
+- workspace tools (`workspace_list_files`, `workspace_read_file`, `workspace_search`, `workspace_write_file`, `workspace_apply_patch`, `workspace_replace_lines`)
 - a terminal tool (`terminal_run`)
 - git tools (`git_status`, `git_diff`, `git_log`, `git_show`)
 - project tools (`project_current`, `project_add`, `project_create`, `project_clone`)
@@ -23,11 +23,15 @@ Each capability is its own MCP tool with a structured input schema. There is no 
 
 Do not assume a file, project, tool, skill, or MCP server exists unless a tool result confirms it. Start by calling `harness` once, then `project_list` and `list_skills` to orient yourself.
 
+## Session (required first step)
+
+`harness` returns a `session_id`. Every other mcp-harness tool requires it: pass that exact `session_id` on every subsequent call. The server issued it and validates it, so a missing, fabricated, or expired `session_id` is rejected before the tool runs. If you get that error, call `harness` again to obtain a fresh `session_id`. This is also the id the harness uses to group your calls into one session for history and approvals.
+
+So the flow is always: call `harness` first → read this guide → reuse the returned `session_id` on all other tools.
+
 ## Selecting A Workspace
 
 Most tools accept an optional `project` argument: a project id, name, or absolute path. Leave it empty to operate in the default sandbox. Resolve the target with `project_list` or `project_current` before acting if you are unsure which workspace you are in.
-
-Pass a stable `session_id` across related calls so the harness groups them into one session for history and approval matching.
 
 ## Access Policy And Approvals
 
@@ -36,17 +40,23 @@ The permission policy is set by the operator in the Web UI, never by you. You ca
 - Under the `default` policy, high-risk operations are queued for operator approval. The tool returns `status: "approval_required"` with an approval record. After the operator approves it in the Web UI, call the same tool again with `approval_id` set to that record's id.
 - Under the `full_access` policy, high-risk operations execute directly.
 
-High-risk operations: file mutation (`workspace_write_file`, `workspace_apply_patch`), `terminal_run` with an obviously destructive command, workspace version restore (`history_restore`), project registry changes (`project_add`, `project_create`, `project_clone`), MCP configuration changes (`mcp_add`, `mcp_remove`), and `mcp_call` to an untrusted external server.
+High-risk operations: file mutation (`workspace_write_file`, `workspace_apply_patch`, `workspace_replace_lines`), `terminal_run` with an obviously destructive command, workspace version restore (`history_restore`), project registry changes (`project_add`, `project_create`, `project_clone`), MCP configuration changes (`mcp_add`, `mcp_remove`), and `mcp_call` to an untrusted external server.
 
 Do not fabricate an `approval_id`. If you receive `approval_required`, tell the user the operation is waiting for approval in the Web UI.
 
 ## Reading And Editing Files
 
-To rely on a file's contents, read it with `workspace_read_file` (or list directories with `workspace_list_files`, search with `workspace_search`). Do not assume contents you have not read.
+To rely on a file's contents, read it with `workspace_read_file` (or list directories with `workspace_list_files`, search with `workspace_search`). Do not assume contents you have not read. `workspace_read_file` returns `numbered_content` with 1-based line numbers (cat -n style); use those numbers to locate code and to target line-range edits. The line numbers and tab are display only — strip them when reproducing file text.
 
 When the user references a file with `@path`, treat it as a workspace-relative path and read it with a workspace tool before relying on it. If a reference is ambiguous, search for likely matches; ask only when choosing the wrong target would materially change the result.
 
-To change files, prefer `workspace_apply_patch` for targeted edits and `workspace_write_file` for whole-file writes. Both mutate files and follow the approval flow above. File writes require the project to be in `work` mode (sandbox is `work` by default; project mode is set in the project config).
+To change files, prefer fragment edits over rewriting whole files — this is essential for large files:
+
+- `workspace_replace_lines` replaces an inclusive 1-based line range (`start_line`..`end_line`) with new `content`. To insert without removing lines, set `end_line` to `start_line - 1`. Read the file first (the line numbers come from `numbered_content`), and re-read before each edit since line numbers shift after a change.
+- `workspace_apply_patch` applies a harness patch for targeted multi-hunk edits.
+- `workspace_write_file` writes a whole file; use it for new or small files, not for editing large ones.
+
+All three mutate files and follow the approval flow above. File writes require the project to be in `work` mode (sandbox is `work` by default; project mode is set in the project config).
 
 ## Projects And Workspaces
 

@@ -2,17 +2,73 @@ package harness
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"sync"
 	"time"
 )
 
 type Runtime struct {
 	projects ProjectRegistry
 	skills   *SkillRegistry
+	sessions *sessionRegistry
 }
 
 func NewRuntime() *Runtime {
-	return &Runtime{skills: NewSkillRegistry()}
+	return &Runtime{skills: NewSkillRegistry(), sessions: newSessionRegistry()}
+}
+
+// IssueSession mints a server-issued session id. The harness tool calls this so
+// that every other tool can require a valid id, forcing the agent through the
+// protocol guide before it acts.
+func (r *Runtime) IssueSession() string { return r.sessions.issue() }
+
+// ValidSession reports whether id was issued by this server and has not expired.
+func (r *Runtime) ValidSession(id string) bool { return r.sessions.valid(id) }
+
+const sessionTTL = 24 * time.Hour
+
+type sessionRegistry struct {
+	mu  sync.Mutex
+	ids map[string]time.Time
+}
+
+func newSessionRegistry() *sessionRegistry {
+	return &sessionRegistry{ids: map[string]time.Time{}}
+}
+
+func (s *sessionRegistry) issue() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for id, issued := range s.ids {
+		if now.Sub(issued) > sessionTTL {
+			delete(s.ids, id)
+		}
+	}
+	buf := make([]byte, 16)
+	_, _ = rand.Read(buf)
+	id := "sess-" + hex.EncodeToString(buf)
+	s.ids[id] = now
+	return id
+}
+
+func (s *sessionRegistry) valid(id string) bool {
+	if id == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	issued, ok := s.ids[id]
+	if !ok {
+		return false
+	}
+	if time.Since(issued) > sessionTTL {
+		delete(s.ids, id)
+		return false
+	}
+	return true
 }
 
 // Skills exposes the runtime skill registry for read-only tools.
@@ -22,14 +78,16 @@ func (r *Runtime) Skills() *SkillRegistry {
 
 // Guide returns the harness protocol prompt and lightweight orientation. It runs
 // no local work; agents call it once before using any other harness tool.
-func (r *Runtime) Guide(project string) GuideResult {
-	result := GuideResult{Instructions: ComposeGuide()}
-	if projects, err := r.projects.List(); err == nil {
-		result.Projects = projects
+func (r *Runtime) Guide(owner, project string) GuideResult {
+	owner = NormalizeOwner(owner)
+	projects := ProjectRegistry{Owner: owner}
+	result := GuideResult{Owner: owner, Instructions: ComposeGuide(), SessionID: r.IssueSession()}
+	if list, err := projects.List(); err == nil {
+		result.Projects = list
 	}
 	result.Skills = r.skills.List()
-	result.AccessMode = CurrentAccessMode()
-	if workspace, err := r.projects.Resolve(project, ""); err == nil {
+	result.AccessMode = CurrentAccessModeFor(owner)
+	if workspace, err := projects.Resolve(project, ""); err == nil {
 		result.CurrentProject = workspace.Project
 		result.WorkspaceRoot = workspace.Root
 		result.Mode = workspace.Mode
@@ -51,17 +109,18 @@ func (r *Runtime) ExecuteTool(ctx context.Context, req ToolCallRequest) (ToolCal
 	if args == nil {
 		args = map[string]any{}
 	}
-	workspace, err := r.projects.Resolve(req.Project, "")
+	owner := NormalizeOwner(req.Owner)
+	workspace, err := ProjectRegistry{Owner: owner}.Resolve(req.Project, "")
 	if err != nil {
 		return ToolCallResult{}, err
 	}
-	policy := CurrentAccessMode()
-	sessionState := LoadSessionState(sessionID)
+	policy := CurrentAccessModeFor(owner)
+	sessionState := LoadSessionStateFor(owner, sessionID)
 	registry := NewToolsetRegistry(workspace, r.skills, sessionID, policy)
 	call := HarnessCall{Index: 0, Tool: req.Tool, Args: args}
 
 	mutates := toolMutates(req.Tool)
-	step := r.nextStep(sessionID)
+	step := r.nextStep(owner, sessionID)
 	callID := fmt.Sprintf("call-%s-%d-%d", sessionID, step, time.Now().UnixNano())
 	ctx = WithCallID(ctx, callID)
 	publishToolStart(callID, workspace, sessionID, req.Tool, getString(args, "command", ""))
@@ -84,7 +143,7 @@ func (r *Runtime) ExecuteTool(ctx context.Context, req ToolCallRequest) (ToolCal
 	if req.Tool == "skill.use" && observation.Status == "ok" {
 		if name, ok := args["name"].(string); ok {
 			AddActiveSkill(&sessionState, name)
-			_ = SaveSessionState(sessionState)
+			_ = SaveSessionStateFor(owner, sessionState)
 		}
 	}
 
@@ -121,7 +180,7 @@ func (r *Runtime) ExecuteTool(ctx context.Context, req ToolCallRequest) (ToolCal
 		ActiveSkills:  sessionState.ActiveSkills,
 		HistoryEvent:  historyEvent,
 	}
-	_ = recordToolTurn(sessionID, req, workspace, policy, observation, historyEvent)
+	_ = recordToolTurn(owner, sessionID, req, workspace, policy, observation, historyEvent)
 	return result, nil
 }
 
@@ -129,7 +188,7 @@ func (r *Runtime) ExecuteTool(ctx context.Context, req ToolCallRequest) (ToolCal
 // only pays for before/after snapshots and version blobs when they matter.
 func toolMutates(tool string) bool {
 	switch tool {
-	case "workspace.write_file", "workspace.apply_patch", "terminal.run", "history.restore":
+	case "workspace.write_file", "workspace.apply_patch", "workspace.replace_lines", "terminal.run", "history.restore":
 		return true
 	}
 	return false
@@ -143,16 +202,16 @@ func captureSnapshotOrTruncated(root string) WorkspaceSnapshot {
 	return snapshot
 }
 
-func (r *Runtime) nextStep(sessionID string) int {
-	events, err := ListHistoryEvents("", sessionID, 1000, false)
+func (r *Runtime) nextStep(owner, sessionID string) int {
+	events, err := ListHistoryEventsFor(owner, "", sessionID, 1000, false)
 	if err != nil {
 		return 1
 	}
 	return len(events) + 1
 }
 
-func recordToolTurn(sessionID string, req ToolCallRequest, workspace Workspace, policy AccessMode, observation Observation, event *HistoryEvent) error {
-	store, err := DefaultStore()
+func recordToolTurn(owner, sessionID string, req ToolCallRequest, workspace Workspace, policy AccessMode, observation Observation, event *HistoryEvent) error {
+	store, err := DefaultStoreFor(owner)
 	if err != nil {
 		return err
 	}

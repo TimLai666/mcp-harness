@@ -41,11 +41,21 @@ func BuiltinToolSchemas() map[string]ToolSchema {
 			},
 		},
 		"workspace.read_file": {
-			Description: "Read a workspace file with bounded output.",
+			Description: "Read a workspace file with bounded output. Returns numbered_content (line-numbered) so edits can target exact lines.",
 			Args: map[string]ArgSchema{
-				"path":      {Type: ArgString, Required: true},
-				"offset":    {Type: ArgInt},
-				"max_bytes": {Type: ArgInt},
+				"path":         {Type: ArgString, Required: true},
+				"offset":       {Type: ArgInt},
+				"max_bytes":    {Type: ArgInt},
+				"line_numbers": {Type: ArgBool},
+			},
+		},
+		"workspace.replace_lines": {
+			Description: "Replace an inclusive 1-based line range with new content. Edits files in fragments instead of rewriting the whole file. Read the file first to get line numbers.",
+			Args: map[string]ArgSchema{
+				"path":       {Type: ArgString, Required: true},
+				"start_line": {Type: ArgInt, Required: true},
+				"end_line":   {Type: ArgInt, Required: true},
+				"content":    {Type: ArgString},
 			},
 		},
 		"workspace.search": {

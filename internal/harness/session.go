@@ -1,15 +1,21 @@
 package harness
 
 func LoadSessionState(sessionID string) SessionState {
-	store, err := DefaultStore()
+	return LoadSessionStateFor(DefaultOwner, sessionID)
+}
+
+func LoadSessionStateFor(owner, sessionID string) SessionState {
+	store, err := DefaultStoreFor(owner)
 	if err != nil {
 		return SessionState{ID: sessionID}
 	}
 	return store.LoadSessionState(sessionID)
 }
 
-func SaveSessionState(state SessionState) error {
-	store, err := DefaultStore()
+func SaveSessionState(state SessionState) error { return SaveSessionStateFor(DefaultOwner, state) }
+
+func SaveSessionStateFor(owner string, state SessionState) error {
+	store, err := DefaultStoreFor(owner)
 	if err != nil {
 		return err
 	}

@@ -156,11 +156,12 @@ func SaveWorkspaceVersion(sessionID string, workspace Workspace, step int, tool,
 		Label:         label,
 		Snapshot:      snapshot,
 	}
+	version.Owner = NormalizeOwner(workspace.Owner)
 	if workspace.Project != nil {
 		version.ProjectID = workspace.Project.ID
 		version.ProjectName = workspace.Project.Name
 	}
-	store, err := DefaultStore()
+	store, err := DefaultStoreFor(version.Owner)
 	if err != nil {
 		return WorkspaceVersion{}, err
 	}
@@ -168,7 +169,7 @@ func SaveWorkspaceVersion(sessionID string, workspace Workspace, step int, tool,
 }
 
 func AppendHistoryEvent(event HistoryEvent) error {
-	store, err := DefaultStore()
+	store, err := DefaultStoreFor(event.Owner)
 	if err != nil {
 		return err
 	}
@@ -176,15 +177,21 @@ func AppendHistoryEvent(event HistoryEvent) error {
 }
 
 func ListHistoryEvents(projectID, sessionID string, limit int, includeDiff bool) ([]HistoryEvent, error) {
-	store, err := DefaultStore()
+	return ListHistoryEventsFor(DefaultOwner, projectID, sessionID, limit, includeDiff)
+}
+
+func ListHistoryEventsFor(owner, projectID, sessionID string, limit int, includeDiff bool) ([]HistoryEvent, error) {
+	store, err := DefaultStoreFor(owner)
 	if err != nil {
 		return nil, err
 	}
 	return store.ListHistoryEvents(projectID, sessionID, limit, includeDiff)
 }
 
-func GetHistoryEvent(id string) (HistoryEvent, error) {
-	store, err := DefaultStore()
+func GetHistoryEvent(id string) (HistoryEvent, error) { return GetHistoryEventFor(DefaultOwner, id) }
+
+func GetHistoryEventFor(owner, id string) (HistoryEvent, error) {
+	store, err := DefaultStoreFor(owner)
 	if err != nil {
 		return HistoryEvent{}, err
 	}
@@ -192,7 +199,11 @@ func GetHistoryEvent(id string) (HistoryEvent, error) {
 }
 
 func LoadWorkspaceVersion(id string) (WorkspaceVersion, error) {
-	store, err := DefaultStore()
+	return LoadWorkspaceVersionFor(DefaultOwner, id)
+}
+
+func LoadWorkspaceVersionFor(owner, id string) (WorkspaceVersion, error) {
+	store, err := DefaultStoreFor(owner)
 	if err != nil {
 		return WorkspaceVersion{}, err
 	}
@@ -200,7 +211,11 @@ func LoadWorkspaceVersion(id string) (WorkspaceVersion, error) {
 }
 
 func RestoreWorkspaceVersion(root, versionID string) (WorkspaceVersion, string, bool, error) {
-	version, err := LoadWorkspaceVersion(versionID)
+	return RestoreWorkspaceVersionFor(DefaultOwner, root, versionID)
+}
+
+func RestoreWorkspaceVersionFor(owner, root, versionID string) (WorkspaceVersion, string, bool, error) {
+	version, err := LoadWorkspaceVersionFor(owner, versionID)
 	if err != nil {
 		return WorkspaceVersion{}, "", false, err
 	}
@@ -223,7 +238,11 @@ func RestoreWorkspaceVersion(root, versionID string) (WorkspaceVersion, string, 
 }
 
 func PreviewRestoreWorkspaceVersion(root, versionID string) (WorkspaceVersion, string, bool, error) {
-	version, err := LoadWorkspaceVersion(versionID)
+	return PreviewRestoreWorkspaceVersionFor(DefaultOwner, root, versionID)
+}
+
+func PreviewRestoreWorkspaceVersionFor(owner, root, versionID string) (WorkspaceVersion, string, bool, error) {
+	version, err := LoadWorkspaceVersionFor(owner, versionID)
 	if err != nil {
 		return WorkspaceVersion{}, "", false, err
 	}
@@ -280,6 +299,7 @@ func NewHistoryEvent(sessionID string, workspace Workspace, step int, call Harne
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	event := HistoryEvent{
 		ID:            historyID(sessionID, workspace.Root, step, call.Tool, observation.Status, time.Now()),
+		Owner:         NormalizeOwner(workspace.Owner),
 		Timestamp:     now,
 		SessionID:     sessionID,
 		WorkspaceRoot: workspace.Root,

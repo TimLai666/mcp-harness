@@ -14,8 +14,10 @@ type mcpConfigFile struct {
 	Servers []MCPServerConfig `json:"servers"`
 }
 
-func LoadMCPServers() ([]MCPServerConfig, error) {
-	store, err := DefaultStore()
+func LoadMCPServers() ([]MCPServerConfig, error) { return LoadMCPServersFor(DefaultOwner) }
+
+func LoadMCPServersFor(owner string) ([]MCPServerConfig, error) {
+	store, err := DefaultStoreFor(owner)
 	if err != nil {
 		return nil, err
 	}
@@ -23,14 +25,20 @@ func LoadMCPServers() ([]MCPServerConfig, error) {
 }
 
 func SaveMCPServers(servers []MCPServerConfig) error {
-	store, err := DefaultStore()
+	return SaveMCPServersFor(DefaultOwner, servers)
+}
+
+func SaveMCPServersFor(owner string, servers []MCPServerConfig) error {
+	store, err := DefaultStoreFor(owner)
 	if err != nil {
 		return err
 	}
 	return store.SaveMCPServers(servers)
 }
 
-func AddMCPServer(config MCPServerConfig) error {
+func AddMCPServer(config MCPServerConfig) error { return AddMCPServerFor(DefaultOwner, config) }
+
+func AddMCPServerFor(owner string, config MCPServerConfig) error {
 	if config.ID == "" || config.Name == "" {
 		return errors.New("mcp server id and name are required")
 	}
@@ -40,7 +48,7 @@ func AddMCPServer(config MCPServerConfig) error {
 	if config.Transport != "stdio" && config.Transport != "streamable_http" {
 		return errors.New("supported transports: stdio, streamable_http")
 	}
-	servers, err := LoadMCPServers()
+	servers, err := LoadMCPServersFor(owner)
 	if err != nil {
 		return err
 	}
@@ -54,11 +62,13 @@ func AddMCPServer(config MCPServerConfig) error {
 	if !replaced {
 		servers = append(servers, config)
 	}
-	return SaveMCPServers(servers)
+	return SaveMCPServersFor(owner, servers)
 }
 
-func DeleteMCPServer(id string) error {
-	servers, err := LoadMCPServers()
+func DeleteMCPServer(id string) error { return DeleteMCPServerFor(DefaultOwner, id) }
+
+func DeleteMCPServerFor(owner, id string) error {
+	servers, err := LoadMCPServersFor(owner)
 	if err != nil {
 		return err
 	}
@@ -68,11 +78,13 @@ func DeleteMCPServer(id string) error {
 			next = append(next, server)
 		}
 	}
-	return SaveMCPServers(next)
+	return SaveMCPServersFor(owner, next)
 }
 
-func FindMCPServer(id string) (MCPServerConfig, error) {
-	servers, err := LoadMCPServers()
+func FindMCPServer(id string) (MCPServerConfig, error) { return FindMCPServerFor(DefaultOwner, id) }
+
+func FindMCPServerFor(owner, id string) (MCPServerConfig, error) {
+	servers, err := LoadMCPServersFor(owner)
 	if err != nil {
 		return MCPServerConfig{}, err
 	}

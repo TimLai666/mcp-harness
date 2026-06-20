@@ -53,8 +53,18 @@ func TestMCPServerListsAndCallsHarnessTools(t *testing.T) {
 	if !containsJSON(t, guide, "instructions") {
 		t.Fatalf("expected harness guide result, got %#v", guide)
 	}
+	sid := sessionIDFromResult(t, guide)
 
-	projectList, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "project_list", Arguments: map[string]any{}})
+	// A gated tool without a valid session_id must be rejected.
+	rejected, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "project_list", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rejected.IsError {
+		t.Fatalf("expected project_list without session_id to be rejected, got %#v", rejected)
+	}
+
+	projectList, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "project_list", Arguments: map[string]any{"session_id": sid}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +74,7 @@ func TestMCPServerListsAndCallsHarnessTools(t *testing.T) {
 
 	run, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "workspace_list_files",
-		Arguments: map[string]any{"session_id": "mcp-e2e", "path": ".", "max_entries": 5},
+		Arguments: map[string]any{"session_id": sid, "path": ".", "max_entries": 5},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +82,22 @@ func TestMCPServerListsAndCallsHarnessTools(t *testing.T) {
 	if !containsJSON(t, run, `"status":"ok"`) || !containsJSON(t, run, "workspace.list_files") {
 		t.Fatalf("expected workspace_list_files result, got %#v", run)
 	}
+}
+
+func sessionIDFromResult(t *testing.T, result *mcp.CallToolResult) string {
+	t.Helper()
+	for _, content := range result.Content {
+		if text, ok := content.(*mcp.TextContent); ok {
+			var payload struct {
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal([]byte(text.Text), &payload) == nil && payload.SessionID != "" {
+				return payload.SessionID
+			}
+		}
+	}
+	t.Fatal("no session_id in harness guide result")
+	return ""
 }
 
 func containsJSON(t *testing.T, value any, needle string) bool {

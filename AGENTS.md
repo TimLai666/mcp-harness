@@ -26,9 +26,11 @@
 - `cmd/mcp-harness`：MCP stdio server。
 - `cmd/mcp-harness-web`：Web UI 控制台與遠端 MCP endpoint。
 - `internal/harness`：核心 runtime、單一工具執行、toolsets、skills、prompt、event broker。
-- `internal/harness/events.go`：in-process event broker，串流 `terminal_run` 輸出與 tool/approval/history/project 事件給 Web UI；project registry 變更(建立/clone/新增/改名/重定位/刪除)都會推 `project` 事件讓控制台即時更新。
+- `internal/harness/events.go`：in-process event broker，串流 `terminal_run` 輸出與 activity/tool/approval/history/project 事件給 Web UI。`internal/mcpserver` 的 `addTool` wrapper 讓**每個** MCP tool call（含唯讀工具）都發 `activity` 事件，project registry 變更也會推 `project` 事件，控制台即時更新。事件 broker 是 process 單例，agent 必須連到 Web server 的 `/mcp` 才會跨到 dashboard。
 - `internal/mcpserver`：direct MCP tool 註冊與名稱轉換(`exec()`)。
-- `internal/web`：Web API、SSE(`/api/events`)、HTML 控制台。
+- `internal/web`：Web API、SSE(`/api/events`)、HTML 控制台、OIDC 登入(`internal/web/auth.go`)。
+- `internal/oidcauth`：純 stdlib 的 OIDC JWT 驗證(JWKS/RS256)與 discovery,給 `/mcp` 與 WebUI 登入用。
+- 多租戶:設定 OIDC 後以 token `sub` 當 owner。隔離是結構性的 — 每個 owner 一份 DB 與目錄(`MCP_HARNESS_HOME/tenants/<owner>/`),不是靠 `WHERE owner=?`。harness 套件用 `...For(owner)` 變體,zero-arg 版是 `DefaultOwner`(`local`)的 back-compat wrapper。新增會碰 store 的功能時,要同時提供 owner-aware 變體並在 mcpserver/web 從認證 context 帶入 owner。
 - `MCP_HARNESS_HOME/harness.db`：SQLite primary store。
 - `MCP_HARNESS_HOME/history/blobs`：workspace version snapshot blob store。
 - `MCP_HARNESS_HOME/mcps.json`：legacy 外接 MCP server 設定匯入來源；DB 建好後以 SQLite 為主。
@@ -68,7 +70,8 @@
 - 公開的 MCP tool 名稱（底線式）對應內部 toolset 名稱（`toolset.tool` 點式）；`exec()` 負責轉換，內部 registry、schema、history 仍用點式名稱。
 - 高風險工具要支援 `approval_id`：未核准時回傳 `approval_required`，operator 在 Web UI 核准後，agent 用相同參數加上 `approval_id` 重打。
 - 每個工具的參數仍要走 `ValidateToolArgs` 的 schema 驗證。
-- `harness` tool 只回傳 prompt 與概況，永遠不執行本機工作。
+- `harness` tool 只回傳 prompt、概況與一個 server 發的 `session_id`，永遠不執行本機工作。
+- session gate：`harness` 以外的工具都在 `internal/mcpserver` 的 `addTool` wrapper 驗證 `session_id` 必須是 server 發的(runtime `sessionRegistry` 簽發/驗證);`harness` 用 `addOpenTool` 不驗。gate 在 MCP 邊界,所以直接呼叫 `ExecuteTool` 的 harness 套件測試不受影響。
 
 不要把能力重新包回 DSL、`message` 自然語言或 `<harness_tool_call>` block。
 

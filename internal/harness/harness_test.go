@@ -44,7 +44,7 @@ func TestGuideInjectsProjectInstructions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sandbox, "AGENTS.md"), []byte("Use repo-specific rules."), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	guide := NewRuntime().Guide("")
+	guide := NewRuntime().Guide("", "")
 	if len(guide.ProjectInstructions) != 1 || guide.ProjectInstructions[0].Content != "Use repo-specific rules." {
 		t.Fatalf("expected injected project instructions, got %#v", guide.ProjectInstructions)
 	}
