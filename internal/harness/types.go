@@ -71,12 +71,19 @@ type ToolCallRequest struct {
 	Args      map[string]any `json:"args,omitempty"`
 }
 
+// RuntimeInfo describes a detected language runtime or package manager.
+type RuntimeInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
 // GuideResult is what the prompt-only `harness` tool returns: the protocol
 // instructions plus lightweight orientation so the agent can discover context.
 type GuideResult struct {
 	SessionID           string               `json:"session_id"`
 	Owner               string               `json:"owner,omitempty"`
 	Instructions        string               `json:"instructions"`
+	AvailableRuntimes   []RuntimeInfo        `json:"available_runtimes,omitempty"`
 	AccessMode          AccessMode           `json:"access_mode"`
 	CurrentProject      *Project             `json:"current_project,omitempty"`
 	WorkspaceRoot       string               `json:"workspace_root,omitempty"`

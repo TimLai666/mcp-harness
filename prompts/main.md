@@ -23,6 +23,17 @@ Each capability is its own MCP tool with a structured input schema. There is no 
 
 Do not assume a file, project, tool, skill, or MCP server exists unless a tool result confirms it. Start by calling `harness` once, then `project_list` and `list_skills` to orient yourself.
 
+## Available Runtimes
+
+The harness host provides the following language runtimes and package managers for `terminal_run`:
+
+- **uv** — Python environment and package management. Always use `uv` for Python projects: `uv venv`, `uv pip install`, `uv run`, etc. Do not use `pip` or `python -m venv` directly.
+- **nodejs** — JavaScript/TypeScript runtime (`node`).
+- **bun** — All-in-one JavaScript runtime, bundler, and package manager. Preferred for fast installs and running TypeScript directly.
+- **go** — Go toolchain (`go build`, `go test`, `go run`, etc.).
+
+The `harness` tool returns an `available_runtimes` map confirming which of these are actually on `PATH` and their versions. Check that result before relying on a specific runtime.
+
 ## Session (required first step)
 
 `harness` returns a `session_id`. Every other mcp-harness tool requires it: pass that exact `session_id` on every subsequent call. The server issued it and validates it, so a missing, fabricated, or expired `session_id` is rejected before the tool runs. If you get that error, call `harness` again to obtain a fresh `session_id`. This is also the id the harness uses to group your calls into one session for history and approvals.

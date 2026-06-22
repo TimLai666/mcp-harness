@@ -82,6 +82,7 @@ func (r *Runtime) Guide(owner, project string) GuideResult {
 	owner = NormalizeOwner(owner)
 	projects := ProjectRegistry{Owner: owner}
 	result := GuideResult{Owner: owner, Instructions: ComposeGuide(), SessionID: r.IssueSession()}
+	result.AvailableRuntimes = DetectRuntimes()
 	if list, err := projects.List(); err == nil {
 		result.Projects = list
 	}

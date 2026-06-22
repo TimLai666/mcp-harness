@@ -7,9 +7,20 @@ COPY . .
 RUN go build -o /out/mcp-harness ./cmd/mcp-harness
 RUN go build -o /out/mcp-harness-web ./cmd/mcp-harness-web
 
-FROM alpine:3.22
+FROM alpine:3.24 AS runtime
 
-RUN apk add --no-cache git github-cli ripgrep
+# Install system deps and runtimes
+RUN apk add --no-cache \
+    git github-cli ripgrep \
+    nodejs npm \
+    bun \
+    go
+
+# Install uv (standalone installer, not in Alpine repos)
+RUN wget -qO- https://astral.sh/uv/install.sh | sh && \
+    ln -s /root/.cargo/bin/uv /usr/local/bin/uv && \
+    uv --version
+
 WORKDIR /app
 COPY --from=build /out/mcp-harness /app/mcp-harness
 COPY --from=build /out/mcp-harness-web /app/mcp-harness-web
