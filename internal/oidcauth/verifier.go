@@ -6,8 +6,9 @@ package oidcauth
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rsa"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -33,10 +34,15 @@ type Discovery struct {
 type jwk struct {
 	Kty string `json:"kty"`
 	Kid string `json:"kid"`
-	N   string `json:"n"`
-	E   string `json:"e"`
 	Alg string `json:"alg"`
 	Use string `json:"use"`
+	// RSA
+	N string `json:"n"`
+	E string `json:"e"`
+	// EC
+	Crv string `json:"crv"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
 }
 
 // Claims are the validated token claims callers care about.
@@ -56,7 +62,7 @@ type Verifier struct {
 
 	mu        sync.Mutex
 	disc      *Discovery
-	keys      map[string]*rsa.PublicKey
+	keys      map[string]crypto.PublicKey
 	keysAt    time.Time
 	discAt    time.Time
 	cacheFor  time.Duration
@@ -116,7 +122,8 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
 		return nil, errors.New("invalid token header json")
 	}
-	if header.Alg != "RS256" {
+	hash, ok := algHash(header.Alg)
+	if !ok {
 		return nil, fmt.Errorf("unsupported token alg: %s", header.Alg)
 	}
 	key, err := v.keyForKid(ctx, header.Kid)
@@ -128,9 +135,11 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 	if err != nil {
 		return nil, errors.New("invalid token signature encoding")
 	}
-	hashed := sha256.Sum256([]byte(signed))
-	if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, hashed[:], sig); err != nil {
-		return nil, errors.New("token signature verification failed")
+	h := hash.New()
+	h.Write([]byte(signed))
+	digest := h.Sum(nil)
+	if err := verifySignature(header.Alg, key, digest, sig); err != nil {
+		return nil, err
 	}
 
 	payload, err := b64.DecodeString(parts[1])
@@ -218,7 +227,7 @@ func PeekClaims(token string) PeekedToken {
 	return peek
 }
 
-func (v *Verifier) keyForKid(ctx context.Context, kid string) (*rsa.PublicKey, error) {
+func (v *Verifier) keyForKid(ctx context.Context, kid string) (crypto.PublicKey, error) {
 	v.mu.Lock()
 	if v.keys != nil && time.Since(v.keysAt) < v.cacheFor {
 		if key, ok := v.keys[kid]; ok {
@@ -238,12 +247,9 @@ func (v *Verifier) keyForKid(ctx context.Context, kid string) (*rsa.PublicKey, e
 	if err := v.getJSON(ctx, disc.JWKSURI, &set); err != nil {
 		return nil, fmt.Errorf("jwks fetch failed: %w", err)
 	}
-	keys := map[string]*rsa.PublicKey{}
+	keys := map[string]crypto.PublicKey{}
 	for _, k := range set.Keys {
-		if k.Kty != "RSA" {
-			continue
-		}
-		pub, err := rsaPublicKey(k)
+		pub, err := publicKeyFromJWK(k)
 		if err != nil {
 			continue
 		}
@@ -282,6 +288,17 @@ func (v *Verifier) getJSON(ctx context.Context, url string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+func publicKeyFromJWK(k jwk) (crypto.PublicKey, error) {
+	switch k.Kty {
+	case "RSA":
+		return rsaPublicKey(k)
+	case "EC":
+		return ecPublicKey(k)
+	default:
+		return nil, fmt.Errorf("unsupported key type: %s", k.Kty)
+	}
+}
+
 func rsaPublicKey(k jwk) (*rsa.PublicKey, error) {
 	nBytes, err := b64.DecodeString(k.N)
 	if err != nil {
@@ -291,17 +308,84 @@ func rsaPublicKey(k jwk) (*rsa.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	n := new(big.Int).SetBytes(nBytes)
-	var e uint64
-	switch len(eBytes) {
-	case 0:
+	if len(eBytes) == 0 {
 		return nil, errors.New("empty exponent")
-	default:
-		padded := make([]byte, 8)
-		copy(padded[8-len(eBytes):], eBytes)
-		e = binary.BigEndian.Uint64(padded)
 	}
+	n := new(big.Int).SetBytes(nBytes)
+	padded := make([]byte, 8)
+	copy(padded[8-len(eBytes):], eBytes)
+	e := binary.BigEndian.Uint64(padded)
 	return &rsa.PublicKey{N: n, E: int(e)}, nil
+}
+
+func ecPublicKey(k jwk) (*ecdsa.PublicKey, error) {
+	var curve elliptic.Curve
+	switch k.Crv {
+	case "P-256":
+		curve = elliptic.P256()
+	case "P-384":
+		curve = elliptic.P384()
+	case "P-521":
+		curve = elliptic.P521()
+	default:
+		return nil, fmt.Errorf("unsupported EC curve: %s", k.Crv)
+	}
+	xBytes, err := b64.DecodeString(k.X)
+	if err != nil {
+		return nil, err
+	}
+	yBytes, err := b64.DecodeString(k.Y)
+	if err != nil {
+		return nil, err
+	}
+	return &ecdsa.PublicKey{Curve: curve, X: new(big.Int).SetBytes(xBytes), Y: new(big.Int).SetBytes(yBytes)}, nil
+}
+
+func algHash(alg string) (crypto.Hash, bool) {
+	switch alg {
+	case "RS256", "ES256":
+		return crypto.SHA256, true
+	case "ES384":
+		return crypto.SHA384, true
+	case "ES512":
+		return crypto.SHA512, true
+	default:
+		return 0, false
+	}
+}
+
+func verifySignature(alg string, key crypto.PublicKey, digest, sig []byte) error {
+	switch alg {
+	case "RS256":
+		rsaKey, ok := key.(*rsa.PublicKey)
+		if !ok {
+			return errors.New("token alg/key mismatch: expected RSA key")
+		}
+		hash, _ := algHash(alg)
+		if err := rsa.VerifyPKCS1v15(rsaKey, hash, digest, sig); err != nil {
+			return errors.New("token signature verification failed")
+		}
+		return nil
+	case "ES256", "ES384", "ES512":
+		ecKey, ok := key.(*ecdsa.PublicKey)
+		if !ok {
+			return errors.New("token alg/key mismatch: expected EC key")
+		}
+		// JWS ECDSA signatures are the raw concatenation r||s, each padded to the
+		// curve's byte size (not ASN.1 DER).
+		size := (ecKey.Curve.Params().BitSize + 7) / 8
+		if len(sig) != 2*size {
+			return fmt.Errorf("invalid ECDSA signature length: got %d, want %d", len(sig), 2*size)
+		}
+		r := new(big.Int).SetBytes(sig[:size])
+		s := new(big.Int).SetBytes(sig[size:])
+		if !ecdsa.Verify(ecKey, digest, r, s) {
+			return errors.New("token signature verification failed")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported token alg: %s", alg)
+	}
 }
 
 func parseAudience(raw json.RawMessage) []string {

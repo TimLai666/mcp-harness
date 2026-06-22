@@ -3,9 +3,12 @@ package oidcauth
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -75,6 +78,72 @@ func TestVerifierValidatesAndRejects(t *testing.T) {
 	if _, err := v.Verify(context.Background(), tampered); err == nil {
 		t.Fatal("expected tampered token to be rejected")
 	}
+}
+
+func TestVerifierAcceptsES384(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	var issuer string
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(Discovery{Issuer: issuer, JWKSURI: issuer + "/jwks"})
+	})
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		x := make([]byte, 48)
+		y := make([]byte, 48)
+		key.X.FillBytes(x)
+		key.Y.FillBytes(y)
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []jwk{{
+			Kty: "EC", Kid: "ec1", Alg: "ES384", Use: "sig", Crv: "P-384",
+			X: b64.EncodeToString(x), Y: b64.EncodeToString(y),
+		}}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	issuer = server.URL
+
+	v := NewVerifier(issuer, "mcp-harness")
+	token := signES384(t, key, "ec1", map[string]any{
+		"sub": "ec-user", "iss": issuer, "aud": "mcp-harness",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	claims, err := v.Verify(context.Background(), token)
+	if err != nil {
+		t.Fatalf("expected ES384 token to verify, got %v", err)
+	}
+	if claims.Subject != "ec-user" {
+		t.Fatalf("unexpected subject: %q", claims.Subject)
+	}
+
+	// A signature from a different key must fail.
+	other, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	bad := signES384(t, other, "ec1", map[string]any{
+		"sub": "ec-user", "iss": issuer, "aud": "mcp-harness",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	if _, err := v.Verify(context.Background(), bad); err == nil {
+		t.Fatal("expected mismatched-key signature to be rejected")
+	}
+}
+
+func signES384(t *testing.T, key *ecdsa.PrivateKey, kid string, claims map[string]any) string {
+	t.Helper()
+	header := map[string]any{"alg": "ES384", "typ": "JWT", "kid": kid}
+	h, _ := json.Marshal(header)
+	c, _ := json.Marshal(claims)
+	signingInput := b64.EncodeToString(h) + "." + b64.EncodeToString(c)
+	digest := sha512.Sum384([]byte(signingInput))
+	r, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := make([]byte, 96)
+	r.FillBytes(sig[:48])
+	s.FillBytes(sig[48:])
+	return signingInput + "." + b64.EncodeToString(sig)
 }
 
 func TestPeekClaims(t *testing.T) {
