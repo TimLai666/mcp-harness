@@ -170,6 +170,7 @@ func (r ProjectRegistry) CloneWorkspace(ctx context.Context, repoURL, branch, na
 	}
 	args = append(args, repoURL, path)
 	cmd := exec.CommandContext(cctx, "git", args...)
+	cmd.Env = AppendGitHubEnv(os.Environ(), r.owner())
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

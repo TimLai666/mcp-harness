@@ -174,6 +174,14 @@ Harness 不會：
 
 隔離方式是**結構性**的：每個 tenant 有獨立的 DB 與目錄（`MCP_HARNESS_HOME/tenants/<owner>/{harness.db,workspaces,sandbox,history}`），不是靠 query 加 `WHERE owner=?`，所以不會因漏一個條件而跨租戶外洩。
 
+#### 連結 GitHub 帳號（per-user）
+
+設定 `MCP_HARNESS_GITHUB_CLIENT_ID` / `MCP_HARNESS_GITHUB_CLIENT_SECRET`（一個 GitHub OAuth App，callback = `<PUBLIC_URL>/auth/github/callback`）後，dashboard 會出現「Connect GitHub」。每個使用者連自己的 GitHub：
+
+- token 存在**該租戶**的 store（用 `MCP_HARNESS_SESSION_SECRET` 衍生的金鑰 AES-GCM **加密**),別人讀不到。
+- `project_clone` 與 `terminal_run` 會用該使用者的 token 認證 GitHub（透過 git 的 `GIT_CONFIG_*` env 注入 `http.extraheader`，**不寫進 .git/config**），所以能 clone / push 私有 repo;`gh` CLI 也有 `GH_TOKEN`。
+- 你用你的 Logto 帳號登入就只看到、只用你掛的 GitHub；別人用他的 Logto 帳號用他自己的。沒設這兩個 env 時功能隱藏,維持現狀。
+
 環境變數：
 
 ```text

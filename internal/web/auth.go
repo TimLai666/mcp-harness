@@ -26,21 +26,33 @@ const stateCookie = "mh_oauth_state"
 // authConfig wires the Web UI to the OIDC provider (e.g. Logto). When OIDC is
 // not configured, the console runs single-tenant as the default owner.
 type authConfig struct {
-	cfg        harness.OIDCConfig
-	mcpToken   string
-	tokenVerif *oidcauth.Verifier // audience = MCP resource (for /mcp)
-	idVerif    *oidcauth.Verifier // audience = client id (for Web UI id tokens)
-	secret     []byte
+	cfg            harness.OIDCConfig
+	mcpToken       string
+	tokenVerif     *oidcauth.Verifier // audience = MCP resource (for /mcp)
+	idVerif        *oidcauth.Verifier // audience = client id (for Web UI id tokens)
+	secret         []byte
+	ghClientID     string
+	ghClientSecret string
 }
 
 func newAuthConfig() *authConfig {
 	cfg := harness.LoadOIDCConfig()
-	ac := &authConfig{cfg: cfg, mcpToken: os.Getenv("MCP_HARNESS_MCP_BEARER_TOKEN"), secret: sessionSecret()}
+	ac := &authConfig{
+		cfg:            cfg,
+		mcpToken:       os.Getenv("MCP_HARNESS_MCP_BEARER_TOKEN"),
+		secret:         sessionSecret(),
+		ghClientID:     os.Getenv("MCP_HARNESS_GITHUB_CLIENT_ID"),
+		ghClientSecret: os.Getenv("MCP_HARNESS_GITHUB_CLIENT_SECRET"),
+	}
 	if cfg.Enabled() {
 		ac.tokenVerif = oidcauth.NewVerifier(cfg.Issuer, cfg.Audience)
 		ac.idVerif = oidcauth.NewVerifier(cfg.Issuer, cfg.ClientID)
 	}
 	return ac
+}
+
+func (a *authConfig) githubEnabled() bool {
+	return a.ghClientID != "" && a.ghClientSecret != ""
 }
 
 func (a *authConfig) enabled() bool { return a.cfg.Enabled() }

@@ -29,6 +29,7 @@ func NewHandler() http.Handler {
 	mux.Handle(mcpEndpoint, mcpHandler)
 	mux.Handle(mcpEndpoint+"/", mcpHandler)
 	app.registerAuthRoutes(mux)
+	app.registerGitHubRoutes(mux)
 	// requireOwner resolves the tenant for a Web UI API request, writing a 401
 	// when OIDC is enabled and the caller is not logged in.
 	requireOwner := func(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -463,6 +464,7 @@ const indexHTML = `<!doctype html>
     <aside>
       <h1>mcp-harness</h1>
       <div id="authbar" class="muted" style="font-size:12px;margin-bottom:8px"></div>
+      <div id="github" style="font-size:12px;margin-bottom:8px"></div>
       <h3>Projects</h3>
       <div id="projects"></div>
       <h3>Add Project</h3>
@@ -852,8 +854,22 @@ const indexHTML = `<!doctype html>
         document.getElementById('logout').onclick = (e) => { e.preventDefault(); location.href = '/auth/logout'; };
       } catch (e) {}
     }
+    async function refreshGitHub() {
+      const box = document.getElementById('github');
+      try {
+        const data = await (await fetch('/api/github')).json();
+        if (!data.enabled) { box.textContent = ''; return; }
+        if (data.connected) {
+          box.innerHTML = 'GitHub: <strong style="display:inline">' + escapeHTML(data.login || '?') + '</strong> · <a href="#" id="ghDisconnect">Disconnect</a>';
+          document.getElementById('ghDisconnect').onclick = async (e) => { e.preventDefault(); await fetch('/auth/github/disconnect', {method:'POST'}); refreshGitHub(); };
+        } else {
+          box.innerHTML = '<a href="/auth/github/login">Connect GitHub</a> <span class="muted">(for private repos)</span>';
+        }
+      } catch (e) { box.textContent = ''; }
+    }
     refreshAccessMode();
     refreshAuth();
+    refreshGitHub();
     connectEvents();
   </script>
 </body>

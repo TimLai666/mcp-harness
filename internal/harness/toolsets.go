@@ -447,6 +447,7 @@ func (r *ToolsetRegistry) terminalRun(ctx context.Context, args map[string]any) 
 	defer cancel()
 	cmd := shellCommand(cctx, command)
 	cmd.Dir = cwd
+	cmd.Env = AppendGitHubEnv(os.Environ(), r.workspace.Owner)
 	callID := CallIDFromContext(ctx)
 
 	stdoutPipe, err := cmd.StdoutPipe()

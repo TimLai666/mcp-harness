@@ -40,6 +40,8 @@ func TestConsoleHTMLHasNoChatHarnessRunner(t *testing.T) {
 		`addActivity`,
 		`/api/git`,
 		`updateGitBadges`,
+		`/api/github`,
+		`refreshGitHub`,
 	} {
 		if !strings.Contains(indexHTML, required) {
 			t.Fatalf("console HTML should contain %q", required)
