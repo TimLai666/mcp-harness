@@ -156,15 +156,22 @@ func (a *authConfig) exchangeCode(ctx context.Context, code string) (string, err
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
 	form.Set("redirect_uri", a.cfg.PublicURL+"/auth/callback")
-	form.Set("client_id", a.cfg.ClientID)
-	if a.cfg.ClientSecret != "" {
-		form.Set("client_secret", a.cfg.ClientSecret)
+	// A public client (no secret) carries client_id in the body; a confidential
+	// client authenticates via HTTP Basic below.
+	if a.cfg.ClientSecret == "" {
+		form.Set("client_id", a.cfg.ClientID)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, disc.TokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// Authenticate the client with HTTP Basic (client_secret_basic), the OIDC
+	// default. Per RFC 6749 §2.3.1 the id and secret are form-urlencoded before
+	// base64.
+	if a.cfg.ClientSecret != "" {
+		req.SetBasicAuth(url.QueryEscape(a.cfg.ClientID), url.QueryEscape(a.cfg.ClientSecret))
+	}
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return "", err
