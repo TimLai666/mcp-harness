@@ -41,7 +41,15 @@ func (s ApprovalStore) List() ([]ApprovalRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.ListApprovals()
+	records, err := store.ListApprovals()
+	if err != nil {
+		return nil, err
+	}
+	owner := s.owner()
+	for i := range records {
+		records[i].Owner = owner
+	}
+	return records, nil
 }
 
 func (s ApprovalStore) SetStatus(id string, status ApprovalStatus) (ApprovalRecord, error) {
@@ -52,6 +60,7 @@ func (s ApprovalStore) SetStatus(id string, status ApprovalStatus) (ApprovalReco
 	if err != nil {
 		return ApprovalRecord{}, err
 	}
+	record.Owner = s.owner()
 	record.Status = status
 	record.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	return record, SaveApproval(record)
@@ -85,7 +94,12 @@ func LoadApprovalFor(owner, id string) (ApprovalRecord, error) {
 	if err != nil {
 		return ApprovalRecord{}, err
 	}
-	return store.LoadApproval(id)
+	record, err := store.LoadApproval(id)
+	if err != nil {
+		return record, err
+	}
+	record.Owner = NormalizeOwner(owner)
+	return record, nil
 }
 
 func approvalID(sessionID string, call HarnessCall) string {
