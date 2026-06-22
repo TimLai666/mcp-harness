@@ -55,6 +55,25 @@ func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry, sessionID st
 		"git.diff":                r.gitDiff,
 		"git.log":                 r.gitLog,
 		"git.show":                r.gitShow,
+		"git.add":                 r.gitAdd,
+		"git.commit":              r.gitCommit,
+		"git.checkout":            r.gitCheckout,
+		"git.branch":              r.gitBranch,
+		"git.fetch":               r.gitFetch,
+		"git.pull":                r.gitPull,
+		"git.push":                r.gitPush,
+		"git.merge":               r.gitMerge,
+		"git.reset":               r.gitReset,
+		"git.stash":               r.gitStash,
+		"git.tag":                 r.gitTag,
+		"github.pr_create":        r.githubPRCreate,
+		"github.pr_list":          r.githubPRList,
+		"github.pr_view":          r.githubPRView,
+		"github.pr_merge":         r.githubPRMerge,
+		"github.issue_list":       r.githubIssueList,
+		"github.issue_create":     r.githubIssueCreate,
+		"github.issue_view":       r.githubIssueView,
+		"github.repo_view":        r.githubRepoView,
 		"project.list":            r.projectList,
 		"project.current":         r.projectCurrent,
 		"project.add":             r.projectAdd,
@@ -176,6 +195,22 @@ func (r *ToolsetRegistry) approvalReason(call HarnessCall) string {
 		if looksDestructive(getString(call.Args, "command", "")) {
 			return "Destructive terminal command requires approval."
 		}
+	case "git.push":
+		return "Pushing to a remote repository requires approval."
+	case "git.reset":
+		if getString(call.Args, "mode", "mixed") == "hard" {
+			return "Hard git reset is destructive and requires approval."
+		}
+	case "git.branch":
+		if getBool(call.Args, "delete", false) {
+			return "Deleting a git branch requires approval."
+		}
+	case "github.pr_create":
+		return "Creating a pull request requires approval."
+	case "github.pr_merge":
+		return "Merging a pull request requires approval."
+	case "github.issue_create":
+		return "Creating a GitHub issue requires approval."
 	}
 	return ""
 }
@@ -800,7 +835,14 @@ func (r *ToolsetRegistry) listMCPTools(ctx context.Context, config MCPServerConf
 }
 
 func (r *ToolsetRegistry) git(ctx context.Context, args []string) (any, error) {
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	return r.gitWithTimeout(ctx, args, 20000)
+}
+
+func (r *ToolsetRegistry) gitWithTimeout(ctx context.Context, args []string, timeoutMS int) (any, error) {
+	if timeoutMS <= 0 {
+		timeoutMS = 20000
+	}
+	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, "git", args...)
 	cmd.Dir = r.workspace.Root
@@ -822,6 +864,270 @@ func (r *ToolsetRegistry) git(ctx context.Context, args []string) (any, error) {
 		result["github_auth"] = GitHubAuthStatus(r.workspace.Owner)
 	}
 	return result, nil
+}
+
+func (r *ToolsetRegistry) ghCmd(ctx context.Context, args []string, timeoutMS int) (any, error) {
+	if timeoutMS <= 0 {
+		timeoutMS = 30000
+	}
+	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "gh", args...)
+	cmd.Dir = r.workspace.Root
+	cmd.Env = AppendGitHubEnv(os.Environ(), r.workspace.Owner)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	code := 0
+	if err != nil {
+		code = 1
+		var exitErr *exec.ExitError
+		if ok := errorAs(err, &exitErr); ok {
+			code = exitErr.ExitCode()
+		}
+	}
+	result := map[string]any{"returncode": code, "stdout": tail(stdout.String(), 20000), "stderr": tail(stderr.String(), 20000)}
+	if code != 0 {
+		result["github_auth"] = GitHubAuthStatus(r.workspace.Owner)
+	}
+	return result, nil
+}
+
+// --- git mutation tools ------------------------------------------------------
+
+func (r *ToolsetRegistry) gitAdd(ctx context.Context, args map[string]any) (any, error) {
+	paths := stringSliceArg(args, "paths")
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("paths is required")
+	}
+	return r.git(ctx, append([]string{"add", "--"}, paths...))
+}
+
+func (r *ToolsetRegistry) gitCommit(ctx context.Context, args map[string]any) (any, error) {
+	message := mustString(args, "message")
+	gitArgs := []string{"commit", "-m", message}
+	if getBool(args, "all", false) {
+		gitArgs = []string{"commit", "-a", "-m", message}
+	}
+	return r.git(ctx, gitArgs)
+}
+
+func (r *ToolsetRegistry) gitCheckout(ctx context.Context, args map[string]any) (any, error) {
+	ref := mustString(args, "ref")
+	gitArgs := []string{"checkout"}
+	if getBool(args, "create", false) {
+		gitArgs = append(gitArgs, "-b")
+	}
+	return r.git(ctx, append(gitArgs, ref))
+}
+
+func (r *ToolsetRegistry) gitBranch(ctx context.Context, args map[string]any) (any, error) {
+	name := getString(args, "name", "")
+	if name == "" {
+		gitArgs := []string{"branch"}
+		if getBool(args, "all", false) {
+			gitArgs = append(gitArgs, "-a")
+		}
+		return r.git(ctx, gitArgs)
+	}
+	if getBool(args, "delete", false) {
+		return r.git(ctx, []string{"branch", "-d", name})
+	}
+	return r.git(ctx, []string{"branch", name})
+}
+
+func (r *ToolsetRegistry) gitFetch(ctx context.Context, args map[string]any) (any, error) {
+	remote := getString(args, "remote", "origin")
+	return r.gitWithTimeout(ctx, []string{"fetch", remote}, getInt(args, "timeout_ms", 60000))
+}
+
+func (r *ToolsetRegistry) gitPull(ctx context.Context, args map[string]any) (any, error) {
+	gitArgs := []string{"pull"}
+	if getBool(args, "ff_only", false) {
+		gitArgs = append(gitArgs, "--ff-only")
+	}
+	if getBool(args, "rebase", false) {
+		gitArgs = append(gitArgs, "--rebase")
+	}
+	if remote := getString(args, "remote", ""); remote != "" {
+		gitArgs = append(gitArgs, remote)
+		if branch := getString(args, "branch", ""); branch != "" {
+			gitArgs = append(gitArgs, branch)
+		}
+	}
+	return r.gitWithTimeout(ctx, gitArgs, getInt(args, "timeout_ms", 60000))
+}
+
+func (r *ToolsetRegistry) gitPush(ctx context.Context, args map[string]any) (any, error) {
+	gitArgs := []string{"push"}
+	if getBool(args, "set_upstream", false) {
+		gitArgs = append(gitArgs, "-u")
+	}
+	if getBool(args, "force", false) {
+		gitArgs = append(gitArgs, "--force")
+	}
+	if remote := getString(args, "remote", ""); remote != "" {
+		gitArgs = append(gitArgs, remote)
+	}
+	if branch := getString(args, "branch", ""); branch != "" {
+		gitArgs = append(gitArgs, branch)
+	}
+	return r.gitWithTimeout(ctx, gitArgs, getInt(args, "timeout_ms", 60000))
+}
+
+func (r *ToolsetRegistry) gitMerge(ctx context.Context, args map[string]any) (any, error) {
+	if getBool(args, "abort", false) {
+		return r.git(ctx, []string{"merge", "--abort"})
+	}
+	if getBool(args, "continue", false) {
+		return r.git(ctx, []string{"merge", "--continue"})
+	}
+	branch := mustString(args, "branch")
+	gitArgs := []string{"merge"}
+	if getBool(args, "no_ff", false) {
+		gitArgs = append(gitArgs, "--no-ff")
+	}
+	if message := getString(args, "message", ""); message != "" {
+		gitArgs = append(gitArgs, "-m", message)
+	}
+	return r.git(ctx, append(gitArgs, branch))
+}
+
+func (r *ToolsetRegistry) gitReset(ctx context.Context, args map[string]any) (any, error) {
+	if paths := stringSliceArg(args, "paths"); len(paths) > 0 {
+		return r.git(ctx, append([]string{"reset", "--"}, paths...))
+	}
+	mode := getString(args, "mode", "mixed")
+	ref := getString(args, "ref", "HEAD")
+	return r.git(ctx, []string{"reset", "--" + mode, ref})
+}
+
+func (r *ToolsetRegistry) gitStash(ctx context.Context, args map[string]any) (any, error) {
+	action := mustString(args, "action")
+	switch action {
+	case "push":
+		gitArgs := []string{"stash", "push"}
+		if message := getString(args, "message", ""); message != "" {
+			gitArgs = append(gitArgs, "-m", message)
+		}
+		return r.git(ctx, gitArgs)
+	case "pop":
+		return r.git(ctx, []string{"stash", "pop", fmt.Sprintf("stash@{%d}", getInt(args, "index", 0))})
+	case "apply":
+		return r.git(ctx, []string{"stash", "apply", fmt.Sprintf("stash@{%d}", getInt(args, "index", 0))})
+	case "list":
+		return r.git(ctx, []string{"stash", "list"})
+	case "drop":
+		return r.git(ctx, []string{"stash", "drop", fmt.Sprintf("stash@{%d}", getInt(args, "index", 0))})
+	default:
+		return nil, fmt.Errorf("unknown stash action: %s (use push, pop, list, apply, or drop)", action)
+	}
+}
+
+func (r *ToolsetRegistry) gitTag(ctx context.Context, args map[string]any) (any, error) {
+	name := getString(args, "name", "")
+	if name == "" {
+		return r.git(ctx, []string{"tag", "-l"})
+	}
+	gitArgs := []string{"tag"}
+	if message := getString(args, "message", ""); message != "" {
+		gitArgs = append(gitArgs, "-a", name, "-m", message)
+	} else {
+		gitArgs = append(gitArgs, name)
+	}
+	if ref := getString(args, "ref", ""); ref != "" {
+		gitArgs = append(gitArgs, ref)
+	}
+	return r.git(ctx, gitArgs)
+}
+
+// --- github tools (gh CLI) --------------------------------------------------
+
+func (r *ToolsetRegistry) githubPRCreate(ctx context.Context, args map[string]any) (any, error) {
+	ghArgs := []string{"pr", "create", "--title", mustString(args, "title")}
+	if body := getString(args, "body", ""); body != "" {
+		ghArgs = append(ghArgs, "--body", body)
+	}
+	if base := getString(args, "base", ""); base != "" {
+		ghArgs = append(ghArgs, "--base", base)
+	}
+	if head := getString(args, "head", ""); head != "" {
+		ghArgs = append(ghArgs, "--head", head)
+	}
+	if getBool(args, "draft", false) {
+		ghArgs = append(ghArgs, "--draft")
+	}
+	return r.ghCmd(ctx, ghArgs, getInt(args, "timeout_ms", 30000))
+}
+
+func (r *ToolsetRegistry) githubPRList(ctx context.Context, args map[string]any) (any, error) {
+	ghArgs := []string{"pr", "list"}
+	if state := getString(args, "state", ""); state != "" {
+		ghArgs = append(ghArgs, "--state", state)
+	}
+	ghArgs = append(ghArgs, "--limit", fmt.Sprintf("%d", getInt(args, "limit", 30)))
+	return r.ghCmd(ctx, ghArgs, getInt(args, "timeout_ms", 30000))
+}
+
+func (r *ToolsetRegistry) githubPRView(ctx context.Context, args map[string]any) (any, error) {
+	number := getInt(args, "number", 0)
+	if number <= 0 {
+		return nil, fmt.Errorf("number is required")
+	}
+	return r.ghCmd(ctx, []string{"pr", "view", fmt.Sprintf("%d", number)}, getInt(args, "timeout_ms", 30000))
+}
+
+func (r *ToolsetRegistry) githubPRMerge(ctx context.Context, args map[string]any) (any, error) {
+	number := getInt(args, "number", 0)
+	if number <= 0 {
+		return nil, fmt.Errorf("number is required")
+	}
+	ghArgs := []string{"pr", "merge", fmt.Sprintf("%d", number), "--yes"}
+	switch getString(args, "method", "merge") {
+	case "squash":
+		ghArgs = append(ghArgs, "--squash")
+	case "rebase":
+		ghArgs = append(ghArgs, "--rebase")
+	default:
+		ghArgs = append(ghArgs, "--merge")
+	}
+	return r.ghCmd(ctx, ghArgs, getInt(args, "timeout_ms", 30000))
+}
+
+func (r *ToolsetRegistry) githubIssueList(ctx context.Context, args map[string]any) (any, error) {
+	ghArgs := []string{"issue", "list"}
+	if state := getString(args, "state", ""); state != "" {
+		ghArgs = append(ghArgs, "--state", state)
+	}
+	if labels := getString(args, "labels", ""); labels != "" {
+		ghArgs = append(ghArgs, "--label", labels)
+	}
+	ghArgs = append(ghArgs, "--limit", fmt.Sprintf("%d", getInt(args, "limit", 30)))
+	return r.ghCmd(ctx, ghArgs, getInt(args, "timeout_ms", 30000))
+}
+
+func (r *ToolsetRegistry) githubIssueCreate(ctx context.Context, args map[string]any) (any, error) {
+	ghArgs := []string{"issue", "create", "--title", mustString(args, "title")}
+	if body := getString(args, "body", ""); body != "" {
+		ghArgs = append(ghArgs, "--body", body)
+	}
+	if labels := getString(args, "labels", ""); labels != "" {
+		ghArgs = append(ghArgs, "--label", labels)
+	}
+	return r.ghCmd(ctx, ghArgs, getInt(args, "timeout_ms", 30000))
+}
+
+func (r *ToolsetRegistry) githubIssueView(ctx context.Context, args map[string]any) (any, error) {
+	number := getInt(args, "number", 0)
+	if number <= 0 {
+		return nil, fmt.Errorf("number is required")
+	}
+	return r.ghCmd(ctx, []string{"issue", "view", fmt.Sprintf("%d", number)}, getInt(args, "timeout_ms", 30000))
+}
+
+func (r *ToolsetRegistry) githubRepoView(ctx context.Context, args map[string]any) (any, error) {
+	return r.ghCmd(ctx, []string{"repo", "view"}, getInt(args, "timeout_ms", 30000))
 }
 
 func getString(args map[string]any, key, fallback string) string {

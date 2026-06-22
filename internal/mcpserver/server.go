@@ -94,6 +94,7 @@ func New(runtime *harness.Runtime) *mcp.Server {
 	registerDiscoveryTools(server, runtime)
 	registerWorkspaceTools(server, runtime)
 	registerGitTools(server, runtime)
+	registerGitHubTools(server, runtime)
 	registerProjectTools(server, runtime)
 	registerSkillTools(server, runtime)
 	registerMCPTools(server, runtime)
@@ -470,6 +471,166 @@ type gitShowArgs struct {
 	Rev       string `json:"rev,omitempty" jsonschema:"git revision to show; defaults to HEAD"`
 }
 
+type gitAddArgs struct {
+	Project   string   `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string   `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Paths     []string `json:"paths" jsonschema:"file paths to stage; use [\".\"] to stage all"`
+}
+
+type gitCommitArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Message   string `json:"message" jsonschema:"commit message"`
+	All       bool   `json:"all,omitempty" jsonschema:"stage all modified tracked files before committing"`
+}
+
+type gitCheckoutArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Ref       string `json:"ref" jsonschema:"branch name or commit to check out"`
+	Create    bool   `json:"create,omitempty" jsonschema:"create a new branch (-b)"`
+}
+
+type gitBranchArgs struct {
+	Project    string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID  string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Name       string `json:"name,omitempty" jsonschema:"branch name to create or delete; omit to list"`
+	Delete     bool   `json:"delete,omitempty" jsonschema:"delete the named branch; requires approval"`
+	All        bool   `json:"all,omitempty" jsonschema:"list remote-tracking branches too"`
+	ApprovalID string `json:"approval_id,omitempty" jsonschema:"approval id for branch deletion"`
+}
+
+type gitFetchArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Remote    string `json:"remote,omitempty" jsonschema:"remote name; defaults to origin"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+}
+
+type gitPullArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Remote    string `json:"remote,omitempty" jsonschema:"remote name"`
+	Branch    string `json:"branch,omitempty" jsonschema:"remote branch"`
+	FFOnly    bool   `json:"ff_only,omitempty" jsonschema:"only fast-forward (--ff-only)"`
+	Rebase    bool   `json:"rebase,omitempty" jsonschema:"rebase instead of merge (--rebase)"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+}
+
+type gitPushArgs struct {
+	Project     string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID   string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Remote      string `json:"remote,omitempty" jsonschema:"remote name; defaults to origin"`
+	Branch      string `json:"branch,omitempty" jsonschema:"branch to push"`
+	SetUpstream bool   `json:"set_upstream,omitempty" jsonschema:"set upstream tracking (-u)"`
+	Force       bool   `json:"force,omitempty" jsonschema:"force push (--force)"`
+	TimeoutMS   int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+	ApprovalID  string `json:"approval_id,omitempty" jsonschema:"approval id for push"`
+}
+
+type gitMergeArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Branch    string `json:"branch,omitempty" jsonschema:"branch to merge; required unless abort or continue is set"`
+	Message   string `json:"message,omitempty" jsonschema:"merge commit message"`
+	NoFF      bool   `json:"no_ff,omitempty" jsonschema:"create a merge commit even for fast-forward merges"`
+	Abort     bool   `json:"abort,omitempty" jsonschema:"abort a merge in progress and restore pre-merge state"`
+	Continue  bool   `json:"continue,omitempty" jsonschema:"continue a merge after resolving conflicts"`
+}
+
+type gitResetArgs struct {
+	Project    string   `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID  string   `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Paths      []string `json:"paths,omitempty" jsonschema:"paths to unstage; if omitted, resets HEAD"`
+	Mode       string   `json:"mode,omitempty" jsonschema:"reset mode: soft, mixed (default), or hard"`
+	Ref        string   `json:"ref,omitempty" jsonschema:"target ref to reset to; defaults to HEAD"`
+	ApprovalID string   `json:"approval_id,omitempty" jsonschema:"approval id for hard reset"`
+}
+
+type gitStashArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Action    string `json:"action" jsonschema:"stash action: push, pop, list, apply, or drop"`
+	Message   string `json:"message,omitempty" jsonschema:"stash message (for push)"`
+	Index     int    `json:"index,omitempty" jsonschema:"stash index (for pop, apply, drop)"`
+}
+
+type gitTagArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Name      string `json:"name,omitempty" jsonschema:"tag name to create; omit to list"`
+	Message   string `json:"message,omitempty" jsonschema:"tag message (creates annotated tag)"`
+	Ref       string `json:"ref,omitempty" jsonschema:"ref to tag; defaults to HEAD"`
+}
+
+type githubPRCreateArgs struct {
+	Project    string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID  string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Title      string `json:"title" jsonschema:"PR title"`
+	Body       string `json:"body,omitempty" jsonschema:"PR body/description"`
+	Base       string `json:"base,omitempty" jsonschema:"base branch"`
+	Head       string `json:"head,omitempty" jsonschema:"head branch; defaults to current"`
+	Draft      bool   `json:"draft,omitempty" jsonschema:"create as draft PR"`
+	TimeoutMS  int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+	ApprovalID string `json:"approval_id,omitempty" jsonschema:"approval id for PR creation"`
+}
+
+type githubPRListArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	State     string `json:"state,omitempty" jsonschema:"filter: open, closed, merged, all"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"max PRs to list"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+}
+
+type githubPRViewArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Number    int    `json:"number" jsonschema:"PR number"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+}
+
+type githubPRMergeArgs struct {
+	Project    string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID  string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Number     int    `json:"number" jsonschema:"PR number"`
+	Method     string `json:"method,omitempty" jsonschema:"merge method: merge, squash, or rebase"`
+	TimeoutMS  int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+	ApprovalID string `json:"approval_id,omitempty" jsonschema:"approval id for PR merge"`
+}
+
+type githubIssueListArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	State     string `json:"state,omitempty" jsonschema:"filter: open, closed, all"`
+	Labels    string `json:"labels,omitempty" jsonschema:"comma-separated label filter"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"max issues to list"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+}
+
+type githubIssueCreateArgs struct {
+	Project    string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID  string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Title      string `json:"title" jsonschema:"issue title"`
+	Body       string `json:"body,omitempty" jsonschema:"issue body"`
+	Labels     string `json:"labels,omitempty" jsonschema:"comma-separated labels"`
+	TimeoutMS  int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+	ApprovalID string `json:"approval_id,omitempty" jsonschema:"approval id for issue creation"`
+}
+
+type githubIssueViewArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	Number    int    `json:"number" jsonschema:"issue number"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+}
+
+type githubRepoViewArgs struct {
+	Project   string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID string `json:"session_id" jsonschema:"session id issued by the harness tool; required"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" jsonschema:"timeout in milliseconds"`
+}
+
 func registerGitTools(server *mcp.Server, runtime *harness.Runtime) {
 	addTool(server, runtime, &mcp.Tool{
 		Name:        "git_status",
@@ -497,6 +658,143 @@ func registerGitTools(server *mcp.Server, runtime *harness.Runtime) {
 		Description: "Show one git revision for a workspace.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitShowArgs) (*mcp.CallToolResult, any, error) {
 		return exec(ctx, runtime, "git.show", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_add",
+		Description: "Stage files for the next commit.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitAddArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.add", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_commit",
+		Description: "Commit staged changes.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitCommitArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.commit", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_checkout",
+		Description: "Switch branches or create a new branch.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitCheckoutArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.checkout", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_branch",
+		Description: "List, create, or delete branches. Deleting requires approval.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitBranchArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.branch", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_fetch",
+		Description: "Download objects and refs from a remote repository.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitFetchArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.fetch", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_pull",
+		Description: "Fetch and integrate changes from a remote repository.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitPullArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.pull", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_push",
+		Description: "Push commits to a remote repository. Requires operator approval; re-run with approval_id after approval.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitPushArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.push", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_merge",
+		Description: "Merge a branch into the current branch, or abort/continue a merge in progress.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitMergeArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.merge", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_reset",
+		Description: "Unstage files or reset the current branch. Hard mode requires operator approval.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitResetArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.reset", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_stash",
+		Description: "Stash or restore uncommitted changes.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitStashArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.stash", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "git_tag",
+		Description: "List or create git tags.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitTagArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "git.tag", args.Project, args.SessionID, toArgs(args))
+	})
+}
+
+// --- github (gh CLI) --------------------------------------------------------
+
+func registerGitHubTools(server *mcp.Server, runtime *harness.Runtime) {
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "github_pr_create",
+		Description: "Create a pull request on GitHub. Requires operator approval; re-run with approval_id after approval.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args githubPRCreateArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "github.pr_create", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "github_pr_list",
+		Description: "List pull requests on the current GitHub repository.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args githubPRListArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "github.pr_list", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "github_pr_view",
+		Description: "View details of a pull request on GitHub.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args githubPRViewArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "github.pr_view", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "github_pr_merge",
+		Description: "Merge a pull request on GitHub. Requires operator approval; re-run with approval_id after approval.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args githubPRMergeArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "github.pr_merge", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "github_issue_list",
+		Description: "List issues on the current GitHub repository.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args githubIssueListArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "github.issue_list", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "github_issue_create",
+		Description: "Create an issue on GitHub. Requires operator approval; re-run with approval_id after approval.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args githubIssueCreateArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "github.issue_create", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "github_issue_view",
+		Description: "View details of an issue on GitHub.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args githubIssueViewArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "github.issue_view", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "github_repo_view",
+		Description: "View information about the current GitHub repository.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args githubRepoViewArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "github.repo_view", args.Project, args.SessionID, toArgs(args))
 	})
 }
 

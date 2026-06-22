@@ -108,6 +108,160 @@ func BuiltinToolSchemas() map[string]ToolSchema {
 				"rev": {Type: ArgString},
 			},
 		},
+		"git.add": {
+			Description: "Stage files for the next commit.",
+			Args: map[string]ArgSchema{
+				"paths": {Type: ArgArray, Required: true, Description: "File paths to stage. Use [\".\"] to stage all."},
+			},
+		},
+		"git.commit": {
+			Description: "Commit staged changes.",
+			Args: map[string]ArgSchema{
+				"message": {Type: ArgString, Required: true, Description: "Commit message."},
+				"all":     {Type: ArgBool, Description: "Stage all modified tracked files before committing (-a)."},
+			},
+		},
+		"git.checkout": {
+			Description: "Switch branches or create a new branch.",
+			Args: map[string]ArgSchema{
+				"ref":    {Type: ArgString, Required: true, Description: "Branch name or commit to check out."},
+				"create": {Type: ArgBool, Description: "Create a new branch (-b)."},
+			},
+		},
+		"git.branch": {
+			Description: "List, create, or delete branches.",
+			Args: map[string]ArgSchema{
+				"name":   {Type: ArgString, Description: "Branch name to create or delete. Omit to list."},
+				"delete": {Type: ArgBool, Description: "Delete the named branch. Requires approval."},
+				"all":    {Type: ArgBool, Description: "List remote-tracking branches too."},
+			},
+		},
+		"git.fetch": {
+			Description: "Download objects and refs from a remote.",
+			Args: map[string]ArgSchema{
+				"remote":     {Type: ArgString, Description: "Remote name. Defaults to origin."},
+				"timeout_ms": {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
+		"git.pull": {
+			Description: "Fetch and integrate changes from a remote.",
+			Args: map[string]ArgSchema{
+				"remote":     {Type: ArgString, Description: "Remote name."},
+				"branch":     {Type: ArgString, Description: "Remote branch."},
+				"ff_only":    {Type: ArgBool, Description: "Only fast-forward (--ff-only)."},
+				"rebase":     {Type: ArgBool, Description: "Rebase instead of merge (--rebase)."},
+				"timeout_ms": {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
+		"git.push": {
+			Description: "Push commits to a remote repository. Requires approval.",
+			Args: map[string]ArgSchema{
+				"remote":       {Type: ArgString, Description: "Remote name. Defaults to origin."},
+				"branch":       {Type: ArgString, Description: "Branch to push."},
+				"set_upstream": {Type: ArgBool, Description: "Set upstream tracking (-u)."},
+				"force":        {Type: ArgBool, Description: "Force push (--force). Destructive."},
+				"timeout_ms":   {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
+		"git.merge": {
+			Description: "Merge a branch into the current branch, or abort/continue a merge in progress.",
+			Args: map[string]ArgSchema{
+				"branch":   {Type: ArgString, Description: "Branch to merge. Required unless abort or continue is set."},
+				"message":  {Type: ArgString, Description: "Merge commit message."},
+				"no_ff":    {Type: ArgBool, Description: "Create a merge commit even for fast-forward merges."},
+				"abort":    {Type: ArgBool, Description: "Abort a merge in progress and restore pre-merge state."},
+				"continue": {Type: ArgBool, Description: "Continue a merge after resolving conflicts (same as git merge --continue)."},
+			},
+		},
+		"git.reset": {
+			Description: "Unstage files or reset the current branch. Hard mode requires approval.",
+			Args: map[string]ArgSchema{
+				"paths": {Type: ArgArray, Description: "Paths to unstage. If omitted, resets HEAD."},
+				"mode":  {Type: ArgString, Description: "Reset mode: soft, mixed (default), or hard."},
+				"ref":   {Type: ArgString, Description: "Target ref to reset to. Defaults to HEAD."},
+			},
+		},
+		"git.stash": {
+			Description: "Stash or restore uncommitted changes.",
+			Args: map[string]ArgSchema{
+				"action":  {Type: ArgString, Required: true, Description: "Action: push, pop, list, apply, or drop."},
+				"message": {Type: ArgString, Description: "Stash message (for push)."},
+				"index":   {Type: ArgInt, Description: "Stash index (for pop, apply, drop). Defaults to 0."},
+			},
+		},
+		"git.tag": {
+			Description: "List or create tags.",
+			Args: map[string]ArgSchema{
+				"name":    {Type: ArgString, Description: "Tag name to create. Omit to list."},
+				"message": {Type: ArgString, Description: "Tag message (creates annotated tag)."},
+				"ref":     {Type: ArgString, Description: "Ref to tag. Defaults to HEAD."},
+			},
+		},
+		"github.pr_create": {
+			Description: "Create a pull request on GitHub. Requires approval.",
+			Args: map[string]ArgSchema{
+				"title":      {Type: ArgString, Required: true, Description: "PR title."},
+				"body":       {Type: ArgString, Description: "PR body/description."},
+				"base":       {Type: ArgString, Description: "Base branch."},
+				"head":       {Type: ArgString, Description: "Head branch. Defaults to current."},
+				"draft":      {Type: ArgBool, Description: "Create as draft PR."},
+				"timeout_ms": {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
+		"github.pr_list": {
+			Description: "List pull requests on GitHub.",
+			Args: map[string]ArgSchema{
+				"state":      {Type: ArgString, Description: "Filter: open, closed, merged, all."},
+				"limit":      {Type: ArgInt, Description: "Max PRs to list."},
+				"timeout_ms": {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
+		"github.pr_view": {
+			Description: "View a pull request on GitHub.",
+			Args: map[string]ArgSchema{
+				"number":     {Type: ArgInt, Required: true, Description: "PR number."},
+				"timeout_ms": {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
+		"github.pr_merge": {
+			Description: "Merge a pull request on GitHub. Requires approval.",
+			Args: map[string]ArgSchema{
+				"number":     {Type: ArgInt, Required: true, Description: "PR number."},
+				"method":     {Type: ArgString, Description: "Merge method: merge, squash, or rebase."},
+				"timeout_ms": {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
+		"github.issue_list": {
+			Description: "List issues on GitHub.",
+			Args: map[string]ArgSchema{
+				"state":      {Type: ArgString, Description: "Filter: open, closed, all."},
+				"labels":     {Type: ArgString, Description: "Comma-separated label filter."},
+				"limit":      {Type: ArgInt, Description: "Max issues to list."},
+				"timeout_ms": {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
+		"github.issue_create": {
+			Description: "Create an issue on GitHub. Requires approval.",
+			Args: map[string]ArgSchema{
+				"title":      {Type: ArgString, Required: true, Description: "Issue title."},
+				"body":       {Type: ArgString, Description: "Issue body."},
+				"labels":     {Type: ArgString, Description: "Comma-separated labels."},
+				"timeout_ms": {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
+		"github.issue_view": {
+			Description: "View an issue on GitHub.",
+			Args: map[string]ArgSchema{
+				"number":     {Type: ArgInt, Required: true, Description: "Issue number."},
+				"timeout_ms": {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
+		"github.repo_view": {
+			Description: "View current repository information on GitHub.",
+			Args: map[string]ArgSchema{
+				"timeout_ms": {Type: ArgInt, Description: "Timeout in milliseconds."},
+			},
+		},
 		"project.list":    {Description: "List configured projects."},
 		"project.current": {Description: "Show the current workspace."},
 		"project.add": {
