@@ -620,9 +620,9 @@ const indexHTML = `<!doctype html>
       for (const h of data.events || []) {
         const div = document.createElement('div');
         div.className = 'card';
-        div.innerHTML = '<strong>' + escapeHTML(h.tool) + ' <span class="' + (h.status === 'ok' ? 'ok' : 'bad') + '">' + escapeHTML(h.status) + '</span></strong><small>step ' + h.step + ' - ' + escapeHTML(h.timestamp) + (h.diff_truncated ? ' - diff truncated' : '') + '</small>' + renderDiffHTML(h.diff) + '<div class="grid2"><button class="secondary" data-version="' + h.before_version + '">Preview before</button><button class="secondary" data-version="' + h.after_version + '">Preview after</button></div>';
+        div.innerHTML = '<strong>' + escapeHTML(h.tool) + ' <span class="' + (h.status === 'ok' ? 'ok' : 'bad') + '">' + escapeHTML(h.status) + '</span></strong><small>step ' + h.step + ' - ' + escapeHTML(h.timestamp) + (h.diff_truncated ? ' - diff truncated' : '') + '</small>' + renderDiffHTML(h.diff) + '<div class="grid2"><button class="secondary" data-version="' + h.before_version + '">Before</button><button class="secondary" data-version="' + h.after_version + '">After</button></div>';
         div.onclick = (event) => {
-          if (event.target.dataset.version) return previewRestore(event.target.dataset.version);
+          if (event.target.dataset.version) return viewVersion(event.target.dataset.version);
           setDetail(h);
         };
         list.appendChild(div);
@@ -698,15 +698,25 @@ const indexHTML = `<!doctype html>
       html += '</div>';
       return html;
     }
-    async function previewRestore(versionID) {
+    async function viewVersion(versionID) {
       const res = await fetch('/api/history/restore-preview', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({version_id:versionID}) });
       const data = await res.json();
+      if (data.error) { setDetail(data); return; }
+      const detail = document.getElementById('detail');
+      detail.className = 'card';
+      let html = '<h3 style="margin-top:0">Version snapshot</h3>';
+      html += '<small class="muted">' + escapeHTML(data.version?.id || versionID) + ' — ' + escapeHTML(data.version?.label || '') + '</small>';
+      if (data.diff) html += '<h3 style="margin-top:10px">Diff vs current workspace</h3>' + renderDiffHTML(data.diff);
+      else html += '<p class="muted">No differences from current workspace.</p>';
+      html += '<button style="margin-top:12px" onclick="restoreVersion(\'' + escapeHTML(versionID) + '\')">Restore workspace to this version</button>';
+      detail.innerHTML = html;
+    }
+    async function restoreVersion(versionID) {
+      if (!confirm('This will overwrite current workspace files. Continue?')) return;
+      const res = await fetch('/api/history/restore', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({version_id:versionID}) });
+      const data = await res.json();
       setDetail(data);
-      if (!data.error && confirm('Restore workspace files to this previewed version?')) {
-        const restore = await fetch('/api/history/restore', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({version_id:versionID}) });
-        setDetail(await restore.json());
-        await refreshHistory();
-      }
+      await refreshHistory();
     }
     async function actApproval(id, action) {
       try {
