@@ -800,6 +800,7 @@ func (r *ToolsetRegistry) git(ctx context.Context, args []string) (any, error) {
 	defer cancel()
 	cmd := exec.CommandContext(cctx, "git", args...)
 	cmd.Dir = r.workspace.Root
+	cmd.Env = AppendGitHubEnv(os.Environ(), r.workspace.Owner)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

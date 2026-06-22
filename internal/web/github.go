@@ -87,6 +87,7 @@ func (a *authConfig) registerGitHubRoutes(mux *http.ServeMux) {
 			writeJSON(w, map[string]any{"error": "login required"})
 			return
 		}
+		a.revokeGitHubGrant(r.Context(), owner)
 		if err := harness.ClearGitHubToken(owner); err != nil {
 			writeError(w, err)
 			return
@@ -94,6 +95,39 @@ func (a *authConfig) registerGitHubRoutes(mux *http.ServeMux) {
 		writeJSON(w, map[string]any{"ok": true})
 	}
 	mux.HandleFunc("POST /auth/github/disconnect", disconnect)
+}
+
+// revokeGitHubGrant deletes the OAuth authorization grant on GitHub so the next
+// Connect flow forces a fresh login + consent screen. Best-effort: a failure
+// here just means GitHub will auto-approve next time (the local token is still
+// cleared regardless).
+func (a *authConfig) revokeGitHubGrant(ctx context.Context, owner string) {
+	token, _, ok := harness.GetGitHubToken(owner)
+	if !ok || token == "" {
+		return
+	}
+	body := `{"access_token":"` + token + `"}`
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+		"https://api.github.com/applications/"+a.ghClientID+"/grant",
+		strings.NewReader(body))
+	if err != nil {
+		log.Printf("[github] revoke grant request build failed: %v", err)
+		return
+	}
+	req.SetBasicAuth(a.ghClientID, a.ghClientSecret)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		log.Printf("[github] revoke grant request failed: %v", err)
+		return
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		log.Printf("[github] revoked grant for owner=%s", owner)
+	} else {
+		log.Printf("[github] revoke grant returned %d for owner=%s", resp.StatusCode, owner)
+	}
 }
 
 // githubExchange swaps an authorization code for an access token and reads the

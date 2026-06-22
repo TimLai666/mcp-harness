@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"log"
 	"os"
 	"strings"
 )
@@ -87,10 +88,12 @@ func ClearGitHubToken(owner string) error {
 // written to any .git/config or credential file. With no token it returns base
 // unchanged.
 func AppendGitHubEnv(base []string, owner string) []string {
-	token, _, ok := GetGitHubToken(owner)
+	token, login, ok := GetGitHubToken(owner)
 	if !ok || token == "" {
+		log.Printf("[github] no token found for owner=%q — git will not authenticate", owner)
 		return base
 	}
+	log.Printf("[github] injecting credentials for owner=%q login=%s", owner, login)
 	drop := map[string]bool{
 		"GIT_CONFIG_COUNT": true, "GIT_CONFIG_KEY_0": true, "GIT_CONFIG_VALUE_0": true,
 		"GH_TOKEN": true, "GITHUB_TOKEN": true,
