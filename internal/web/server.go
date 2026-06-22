@@ -708,6 +708,21 @@ const indexHTML = `<!doctype html>
         await refreshHistory();
       }
     }
+    async function actApproval(id, action) {
+      try {
+        const res = await fetch('/api/approvals/' + encodeURIComponent(id) + '/' + action, { method:'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setDetail('Approval ' + action + ' failed (' + res.status + '): ' + (data.error || 'unknown'));
+        } else {
+          setDetail(data.approval || data);
+        }
+      } catch (e) {
+        setDetail('Approval ' + action + ' error: ' + e);
+      }
+      refreshApprovals();
+      refreshHistory();
+    }
     async function refreshApprovals() {
       const res = await fetch('/api/approvals');
       const data = await res.json();
@@ -721,12 +736,12 @@ const indexHTML = `<!doctype html>
         if (a.status === 'pending') {
           const approve = document.createElement('button');
           approve.textContent = 'Approve';
-          approve.onclick = async (event) => { event.stopPropagation(); await fetch('/api/approvals/' + a.id + '/approve', {method:'POST'}); refreshApprovals(); };
+          approve.onclick = (event) => { event.stopPropagation(); actApproval(a.id, 'approve'); };
           div.appendChild(approve);
           const reject = document.createElement('button');
           reject.className = 'danger';
           reject.textContent = 'Reject';
-          reject.onclick = async (event) => { event.stopPropagation(); await fetch('/api/approvals/' + a.id + '/reject', {method:'POST'}); refreshApprovals(); };
+          reject.onclick = (event) => { event.stopPropagation(); actApproval(a.id, 'reject'); };
           div.appendChild(reject);
         }
         list.appendChild(div);
