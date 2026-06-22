@@ -84,7 +84,13 @@ func TestAppendGitHubEnvInjectsCredentials(t *testing.T) {
 	if strings.Count(joined, "GH_TOKEN=") != 1 {
 		t.Fatalf("stale GH_TOKEN must be dropped: %s", joined)
 	}
-	if !strings.Contains(joined, "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader") || !strings.Contains(joined, "GIT_CONFIG_VALUE_0=Authorization: Basic ") {
-		t.Fatalf("expected git extraheader config, got %s", joined)
+	if !strings.Contains(joined, "GIT_CONFIG_KEY_0=url.https://x-access-token:alice-token@github.com/.insteadOf") {
+		t.Fatalf("expected url.insteadOf config, got %s", joined)
+	}
+	if !strings.Contains(joined, "GIT_CONFIG_VALUE_0=https://github.com/") {
+		t.Fatalf("expected insteadOf value, got %s", joined)
+	}
+	if !strings.Contains(joined, "GIT_TERMINAL_PROMPT=0") {
+		t.Fatalf("expected GIT_TERMINAL_PROMPT=0, got %s", joined)
 	}
 }

@@ -95,21 +95,26 @@ func AppendGitHubEnv(base []string, owner string) []string {
 	}
 	log.Printf("[github] injecting credentials for owner=%q login=%s", owner, login)
 	drop := map[string]bool{
-		"GIT_CONFIG_COUNT": true, "GIT_CONFIG_KEY_0": true, "GIT_CONFIG_VALUE_0": true,
+		"GIT_CONFIG_COUNT": true,
+		"GIT_CONFIG_KEY_0": true, "GIT_CONFIG_VALUE_0": true,
+		"GIT_CONFIG_KEY_1": true, "GIT_CONFIG_VALUE_1": true,
+		"GIT_TERMINAL_PROMPT": true,
 		"GH_TOKEN": true, "GITHUB_TOKEN": true,
 	}
-	out := make([]string, 0, len(base)+5)
+	out := make([]string, 0, len(base)+8)
 	for _, kv := range base {
 		key, _, _ := strings.Cut(kv, "=")
 		if !drop[key] {
 			out = append(out, kv)
 		}
 	}
-	auth := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
 	out = append(out,
-		"GIT_CONFIG_COUNT=1",
-		"GIT_CONFIG_KEY_0=http.https://github.com/.extraheader",
-		"GIT_CONFIG_VALUE_0=Authorization: Basic "+auth,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_0=url.https://x-access-token:"+token+"@github.com/.insteadOf",
+		"GIT_CONFIG_VALUE_0=https://github.com/",
+		"GIT_CONFIG_KEY_1=credential.helper",
+		"GIT_CONFIG_VALUE_1=",
 		"GH_TOKEN="+token,
 		"GITHUB_TOKEN="+token,
 	)
