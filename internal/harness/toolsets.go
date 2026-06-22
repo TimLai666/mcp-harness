@@ -478,13 +478,17 @@ func (r *ToolsetRegistry) terminalRun(ctx context.Context, args map[string]any) 
 			code = exitErr.ExitCode()
 		}
 	}
-	return map[string]any{
+	result := map[string]any{
 		"command":    command,
 		"cwd":        Rel(r.workspace.Root, cwd),
 		"returncode": code,
 		"stdout":     tail(stdout.String(), 20000),
 		"stderr":     tail(stderr.String(), 20000),
-	}, nil
+	}
+	if code != 0 {
+		result["github_auth"] = GitHubAuthStatus(r.workspace.Owner)
+	}
+	return result, nil
 }
 
 // streamOutput copies a command pipe into the result buffer while broadcasting
@@ -813,7 +817,11 @@ func (r *ToolsetRegistry) git(ctx context.Context, args []string) (any, error) {
 			code = exitErr.ExitCode()
 		}
 	}
-	return map[string]any{"returncode": code, "stdout": tail(stdout.String(), 20000), "stderr": tail(stderr.String(), 20000)}, nil
+	result := map[string]any{"returncode": code, "stdout": tail(stdout.String(), 20000), "stderr": tail(stderr.String(), 20000)}
+	if code != 0 {
+		result["github_auth"] = GitHubAuthStatus(r.workspace.Owner)
+	}
+	return result, nil
 }
 
 func getString(args map[string]any, key, fallback string) string {

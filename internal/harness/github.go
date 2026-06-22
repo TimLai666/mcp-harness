@@ -87,6 +87,16 @@ func ClearGitHubToken(owner string) error {
 // injects the token via git's env-based config (GIT_CONFIG_*) so it is never
 // written to any .git/config or credential file. With no token it returns base
 // unchanged.
+// GitHubAuthStatus returns a human-readable string describing the GitHub
+// credential state for the given owner, for diagnostic display.
+func GitHubAuthStatus(owner string) string {
+	_, login, ok := GetGitHubToken(owner)
+	if !ok || login == "" {
+		return "no GitHub token for owner " + owner
+	}
+	return "authenticated as " + login
+}
+
 func AppendGitHubEnv(base []string, owner string) []string {
 	token, login, ok := GetGitHubToken(owner)
 	if !ok || token == "" {
