@@ -13,13 +13,16 @@ FROM alpine:3.24 AS runtime
 RUN apk add --no-cache \
     git github-cli ripgrep \
     nodejs npm \
-    bun \
     go
 
-# Install uv (standalone installer, not in Alpine repos)
+# Install uv (standalone installer)
 RUN wget -qO- https://astral.sh/uv/install.sh | sh && \
-    ln -s /root/.cargo/bin/uv /usr/local/bin/uv && \
+    ln -s /root/.local/bin/uv /usr/local/bin/uv && \
     uv --version
+
+# Install bun (via npm)
+RUN npm install -g bun && \
+    bun --version
 
 WORKDIR /app
 COPY --from=build /out/mcp-harness /app/mcp-harness
