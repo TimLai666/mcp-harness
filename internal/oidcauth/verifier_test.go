@@ -77,6 +77,27 @@ func TestVerifierValidatesAndRejects(t *testing.T) {
 	}
 }
 
+func TestPeekClaims(t *testing.T) {
+	// Opaque token (Logto issues these when no resource is requested).
+	if peek := PeekClaims("opaque-access-token"); peek.IsJWT {
+		t.Fatal("opaque token must not be reported as a JWT")
+	}
+	// A JWT exposes its (unverified) claims for diagnostics.
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	jwt := signJWTUnsigned(t, key, map[string]any{
+		"sub": "u1", "iss": "https://issuer/oidc", "aud": "api://mcp", "exp": time.Now().Add(time.Hour).Unix(),
+	})
+	peek := PeekClaims(jwt)
+	if !peek.IsJWT || peek.Subject != "u1" || peek.Issuer != "https://issuer/oidc" || len(peek.Audience) != 1 || peek.Audience[0] != "api://mcp" {
+		t.Fatalf("unexpected peek: %#v", peek)
+	}
+}
+
+func signJWTUnsigned(t *testing.T, key *rsa.PrivateKey, claims map[string]any) string {
+	t.Helper()
+	return signJWT(t, key, "k", claims)
+}
+
 func bigEndianExp(e int) []byte {
 	b := []byte{byte(e >> 16), byte(e >> 8), byte(e)}
 	for len(b) > 1 && b[0] == 0 {

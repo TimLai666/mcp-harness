@@ -163,6 +163,61 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 	return &Claims{Subject: raw.Sub, Issuer: raw.Iss, Audience: aud, Email: raw.Email, Expiry: time.Unix(raw.Exp, 0)}, nil
 }
 
+// Issuer and Audience expose the verifier's expected values for diagnostics.
+func (v *Verifier) Issuer() string   { return v.issuer }
+func (v *Verifier) Audience() string { return v.audience }
+
+// PeekedToken is an UNVERIFIED view of a token, for logging only. Never trust
+// these values for authorization.
+type PeekedToken struct {
+	IsJWT    bool
+	Alg      string
+	Kid      string
+	Issuer   string
+	Subject  string
+	Audience []string
+	Expiry   time.Time
+}
+
+// PeekClaims decodes a token's header and payload without verifying the
+// signature. It exists purely to produce helpful auth-failure diagnostics (for
+// example, distinguishing an opaque token from a JWT, or an audience mismatch).
+func PeekClaims(token string) PeekedToken {
+	peek := PeekedToken{}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return peek // opaque / not a JWT
+	}
+	peek.IsJWT = true
+	if hb, err := b64.DecodeString(parts[0]); err == nil {
+		var h struct {
+			Alg string `json:"alg"`
+			Kid string `json:"kid"`
+		}
+		if json.Unmarshal(hb, &h) == nil {
+			peek.Alg = h.Alg
+			peek.Kid = h.Kid
+		}
+	}
+	if pb, err := b64.DecodeString(parts[1]); err == nil {
+		var c struct {
+			Sub string          `json:"sub"`
+			Iss string          `json:"iss"`
+			Aud json.RawMessage `json:"aud"`
+			Exp int64           `json:"exp"`
+		}
+		if json.Unmarshal(pb, &c) == nil {
+			peek.Subject = c.Sub
+			peek.Issuer = c.Iss
+			peek.Audience = parseAudience(c.Aud)
+			if c.Exp != 0 {
+				peek.Expiry = time.Unix(c.Exp, 0)
+			}
+		}
+	}
+	return peek
+}
+
 func (v *Verifier) keyForKid(ctx context.Context, kid string) (*rsa.PublicKey, error) {
 	v.mu.Lock()
 	if v.keys != nil && time.Since(v.keysAt) < v.cacheFor {

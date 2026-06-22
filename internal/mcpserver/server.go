@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -122,7 +124,11 @@ func StreamableHTTPHandler(runtime *harness.Runtime, opts AuthOptions) http.Hand
 		verify := func(ctx context.Context, token string, req *http.Request) (*auth.TokenInfo, error) {
 			claims, err := opts.Verifier.Verify(ctx, token)
 			if err != nil {
+				logTokenRejection(opts.Verifier, token, err)
 				return nil, fmt.Errorf("%w: %v", auth.ErrInvalidToken, err)
+			}
+			if authDebug() {
+				log.Printf("[mcp-auth] accept: owner=%s aud=%v iss=%s", claims.Subject, claims.Audience, claims.Issuer)
 			}
 			expiry := claims.Expiry
 			if expiry.IsZero() {
@@ -151,6 +157,28 @@ func StreamableHTTPHandler(runtime *harness.Runtime, opts AuthOptions) http.Hand
 		}, nil
 	}
 	return auth.RequireBearerToken(verify, nil)(handler)
+}
+
+func authDebug() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MCP_HARNESS_AUTH_DEBUG"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// logTokenRejection writes a precise, actionable reason an MCP bearer token was
+// rejected. It decodes the token's claims WITHOUT trusting them (never logs the
+// token string or signature) so the operator can see issuer/audience mismatches
+// or — the most common case — an opaque token that is not a JWT.
+func logTokenRejection(verifier *oidcauth.Verifier, token string, err error) {
+	peek := oidcauth.PeekClaims(token)
+	if !peek.IsJWT {
+		log.Printf("[mcp-auth] reject: %v — token is opaque (not a JWT). The client must request resource=%q so Logto issues a JWT for the API resource; check the OAuth resource indicator / protected-resource metadata.", err, verifier.Audience())
+		return
+	}
+	log.Printf("[mcp-auth] reject: %v — token alg=%s kid=%s iss=%q aud=%v sub=%q; expected iss=%q aud=%q",
+		err, peek.Alg, peek.Kid, peek.Issuer, peek.Audience, peek.Subject, verifier.Issuer(), verifier.Audience())
 }
 
 // ownerFromContext returns the authenticated tenant id from the validated bearer

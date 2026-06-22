@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -92,6 +94,7 @@ func (a *authConfig) registerAuthRoutes(mux *http.ServeMux) {
 		}
 		disc, err := a.tokenVerif.Discover(r.Context())
 		if err != nil {
+			log.Printf("[web-auth] login discovery failed (issuer=%s): %v", a.cfg.Issuer, err)
 			http.Error(w, "oidc discovery failed: "+err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -126,8 +129,12 @@ func (a *authConfig) registerAuthRoutes(mux *http.ServeMux) {
 		}
 		uid, err := a.exchangeCode(r.Context(), code)
 		if err != nil {
+			log.Printf("[web-auth] callback token exchange failed: %v", err)
 			http.Error(w, "token exchange failed: "+err.Error(), http.StatusBadGateway)
 			return
+		}
+		if authDebugWeb() {
+			log.Printf("[web-auth] login ok: owner=%s", uid)
 		}
 		http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: "", Path: "/", MaxAge: -1})
 		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: a.signCookie(uid), Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 86400, Secure: a.secureCookies()})
@@ -164,7 +171,8 @@ func (a *authConfig) exchangeCode(ctx context.Context, code string) (string, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var tok struct {
 		IDToken string `json:"id_token"`
@@ -210,6 +218,14 @@ func (a *authConfig) verifyCookie(value string) string {
 
 func (a *authConfig) secureCookies() bool {
 	return strings.HasPrefix(a.cfg.PublicURL, "https://")
+}
+
+func authDebugWeb() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MCP_HARNESS_AUTH_DEBUG"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func sessionSecret() []byte {
