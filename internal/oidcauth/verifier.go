@@ -29,6 +29,7 @@ type Discovery struct {
 	JWKSURI               string `json:"jwks_uri"`
 	UserinfoEndpoint      string `json:"userinfo_endpoint"`
 	RegistrationEndpoint  string `json:"registration_endpoint,omitempty"`
+	EndSessionEndpoint    string `json:"end_session_endpoint,omitempty"`
 }
 
 type jwk struct {

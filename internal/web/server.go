@@ -849,7 +849,7 @@ const indexHTML = `<!doctype html>
         const bar = document.getElementById('authbar');
         if (!data.enabled) { bar.textContent = ''; return; }
         bar.innerHTML = 'Signed in as <strong style="display:inline">' + escapeHTML(data.owner || '?') + '</strong> · <a href="#" id="logout">Logout</a>';
-        document.getElementById('logout').onclick = async (e) => { e.preventDefault(); await fetch('/auth/logout', {method:'POST'}); location.href = '/auth/login'; };
+        document.getElementById('logout').onclick = (e) => { e.preventDefault(); location.href = '/auth/logout'; };
       } catch (e) {}
     }
     refreshAccessMode();

@@ -141,10 +141,24 @@ func (a *authConfig) registerAuthRoutes(mux *http.ServeMux) {
 		http.Redirect(w, r, "/", http.StatusFound)
 	})
 
-	mux.HandleFunc("POST /auth/logout", func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
-		writeJSON(w, map[string]any{"ok": true})
-	})
+	// Logout is a browser navigation (GET): clear our cookie, then end the Logto
+	// session too via RP-initiated logout, otherwise Logto would silently log the
+	// user straight back in.
+	logout := func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.secureCookies()})
+		if a.enabled() {
+			if disc, err := a.tokenVerif.Discover(r.Context()); err == nil && disc.EndSessionEndpoint != "" {
+				q := url.Values{}
+				q.Set("client_id", a.cfg.ClientID)
+				q.Set("post_logout_redirect_uri", a.cfg.PublicURL+"/")
+				http.Redirect(w, r, disc.EndSessionEndpoint+"?"+q.Encode(), http.StatusFound)
+				return
+			}
+		}
+		http.Redirect(w, r, "/", http.StatusFound)
+	}
+	mux.HandleFunc("GET /auth/logout", logout)
+	mux.HandleFunc("POST /auth/logout", logout)
 }
 
 func (a *authConfig) exchangeCode(ctx context.Context, code string) (string, error) {
