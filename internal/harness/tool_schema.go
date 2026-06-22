@@ -67,6 +67,23 @@ func BuiltinToolSchemas() map[string]ToolSchema {
 				"max_matches": {Type: ArgInt},
 			},
 		},
+		"workspace.grep": {
+			Description: "Fast text search using ripgrep. More powerful than workspace.search — supports glob/type filters, context lines, regex, and fixed strings.",
+			Args: map[string]ArgSchema{
+				"pattern":          {Type: ArgString, Required: true, Description: "Search pattern (regex by default, or literal with fixed_strings)."},
+				"path":             {Type: ArgString, Description: "Directory or file to search, relative to workspace root. Defaults to ."},
+				"glob":             {Type: ArgString, Description: "Glob filter, e.g. \"*.go\" or \"!*.test.*\". Can be comma-separated for multiple."},
+				"file_type":        {Type: ArgString, Description: "File type filter, e.g. \"go\", \"js\", \"py\". Comma-separated for multiple."},
+				"case_insensitive": {Type: ArgBool, Description: "Case-insensitive search (-i)."},
+				"fixed_strings":    {Type: ArgBool, Description: "Treat pattern as a literal string, not regex (-F)."},
+				"context":          {Type: ArgInt, Description: "Lines of context around each match (-C)."},
+				"max_matches":      {Type: ArgInt, Description: "Maximum total matches to return. Defaults to 200."},
+				"include_hidden":   {Type: ArgBool, Description: "Search hidden files and directories."},
+				"multiline":        {Type: ArgBool, Description: "Enable multiline matching (-U)."},
+				"word":             {Type: ArgBool, Description: "Match whole words only (-w)."},
+				"invert":           {Type: ArgBool, Description: "Show lines that do NOT match (-v)."},
+			},
+		},
 		"workspace.apply_patch": {
 			Description: "Apply a harness patch in work mode.",
 			Args: map[string]ArgSchema{

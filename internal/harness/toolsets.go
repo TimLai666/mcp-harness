@@ -47,6 +47,7 @@ func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry, sessionID st
 		"workspace.list_files":    r.workspaceListFiles,
 		"workspace.read_file":     r.workspaceReadFile,
 		"workspace.search":        r.workspaceSearch,
+		"workspace.grep":          r.workspaceGrep,
 		"workspace.apply_patch":   r.workspaceApplyPatch,
 		"workspace.write_file":    r.workspaceWriteFile,
 		"workspace.replace_lines": r.workspaceReplaceLines,
@@ -364,6 +365,86 @@ func (r *ToolsetRegistry) workspaceSearch(ctx context.Context, args map[string]a
 		return nil
 	})
 	return map[string]any{"matches": matches, "truncated": len(matches) >= maxMatches}, nil
+}
+
+func (r *ToolsetRegistry) workspaceGrep(ctx context.Context, args map[string]any) (any, error) {
+	pattern := mustString(args, "pattern")
+	searchPath, err := ResolveInside(r.workspace.Root, getString(args, "path", "."))
+	if err != nil {
+		return nil, err
+	}
+	maxMatches := getInt(args, "max_matches", 200)
+
+	rgArgs := []string{"--line-number", "--color", "never", "--no-heading"}
+	if getBool(args, "case_insensitive", false) {
+		rgArgs = append(rgArgs, "-i")
+	}
+	if getBool(args, "fixed_strings", false) {
+		rgArgs = append(rgArgs, "-F")
+	}
+	if getBool(args, "multiline", false) {
+		rgArgs = append(rgArgs, "-U")
+	}
+	if getBool(args, "word", false) {
+		rgArgs = append(rgArgs, "-w")
+	}
+	if getBool(args, "invert", false) {
+		rgArgs = append(rgArgs, "-v")
+	}
+	if getBool(args, "include_hidden", false) {
+		rgArgs = append(rgArgs, "--hidden")
+	}
+	if ctxLines := getInt(args, "context", 0); ctxLines > 0 {
+		rgArgs = append(rgArgs, fmt.Sprintf("-C%d", ctxLines))
+	}
+	if glob := getString(args, "glob", ""); glob != "" {
+		for _, g := range strings.Split(glob, ",") {
+			rgArgs = append(rgArgs, "--glob", strings.TrimSpace(g))
+		}
+	}
+	if fileType := getString(args, "file_type", ""); fileType != "" {
+		for _, t := range strings.Split(fileType, ",") {
+			rgArgs = append(rgArgs, "--type", strings.TrimSpace(t))
+		}
+	}
+	rgArgs = append(rgArgs, "--", pattern, searchPath)
+
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "rg", rgArgs...)
+	cmd.Dir = r.workspace.Root
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+
+	code := 0
+	if err != nil {
+		code = 1
+		var exitErr *exec.ExitError
+		if ok := errorAs(err, &exitErr); ok {
+			code = exitErr.ExitCode()
+		}
+	}
+
+	output := stdout.String()
+	lines := strings.Split(output, "\n")
+	truncated := false
+	if len(lines) > maxMatches {
+		lines = lines[:maxMatches]
+		truncated = true
+		output = strings.Join(lines, "\n")
+	}
+
+	result := map[string]any{
+		"returncode": code,
+		"output":     tail(output, 40000),
+		"truncated":  truncated,
+	}
+	if errText := stderr.String(); errText != "" {
+		result["stderr"] = tail(errText, 5000)
+	}
+	return result, nil
 }
 
 func (r *ToolsetRegistry) workspaceApplyPatch(ctx context.Context, args map[string]any) (any, error) {

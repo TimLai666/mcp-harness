@@ -370,6 +370,23 @@ type searchArgs struct {
 	MaxMatches int    `json:"max_matches,omitempty" jsonschema:"maximum matches to return"`
 }
 
+type grepArgs struct {
+	Project         string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID       string `json:"session_id,omitempty" jsonschema:"optional session id to group related tool calls"`
+	Pattern         string `json:"pattern" jsonschema:"search pattern (regex by default, or literal with fixed_strings)"`
+	Path            string `json:"path,omitempty" jsonschema:"directory or file to search, relative to workspace root"`
+	Glob            string `json:"glob,omitempty" jsonschema:"glob filter, e.g. *.go — comma-separated for multiple"`
+	FileType        string `json:"file_type,omitempty" jsonschema:"file type filter, e.g. go, js, py — comma-separated for multiple"`
+	CaseInsensitive bool   `json:"case_insensitive,omitempty" jsonschema:"case-insensitive search"`
+	FixedStrings    bool   `json:"fixed_strings,omitempty" jsonschema:"treat pattern as literal string, not regex"`
+	Context         int    `json:"context,omitempty" jsonschema:"lines of context around each match"`
+	MaxMatches      int    `json:"max_matches,omitempty" jsonschema:"maximum total matches to return"`
+	IncludeHidden   bool   `json:"include_hidden,omitempty" jsonschema:"search hidden files and directories"`
+	Multiline       bool   `json:"multiline,omitempty" jsonschema:"enable multiline matching"`
+	Word            bool   `json:"word,omitempty" jsonschema:"match whole words only"`
+	Invert          bool   `json:"invert,omitempty" jsonschema:"show lines that do NOT match"`
+}
+
 type writeFileArgs struct {
 	Project    string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
 	SessionID  string `json:"session_id,omitempty" jsonschema:"optional session id to group related tool calls"`
@@ -415,6 +432,13 @@ func registerWorkspaceTools(server *mcp.Server, runtime *harness.Runtime) {
 		Description: "Search text files in a workspace.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args searchArgs) (*mcp.CallToolResult, any, error) {
 		return exec(ctx, runtime, "workspace.search", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "workspace_grep",
+		Description: "Fast text search using ripgrep. Supports glob/type filters, context lines, regex, fixed strings, and more.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args grepArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "workspace.grep", args.Project, args.SessionID, toArgs(args))
 	})
 
 	addTool(server, runtime, &mcp.Tool{

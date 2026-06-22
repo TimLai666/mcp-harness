@@ -9,7 +9,7 @@ RUN go build -o /out/mcp-harness-web ./cmd/mcp-harness-web
 
 FROM alpine:3.22
 
-RUN apk add --no-cache git github-cli
+RUN apk add --no-cache git github-cli ripgrep
 WORKDIR /app
 COPY --from=build /out/mcp-harness /app/mcp-harness
 COPY --from=build /out/mcp-harness-web /app/mcp-harness-web
