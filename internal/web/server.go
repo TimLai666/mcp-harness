@@ -41,6 +41,29 @@ func NewHandler() http.Handler {
 		}
 		return owner, ok
 	}
+	runOperatorTool := func(r *http.Request, owner, project, tool string, args map[string]any) (harness.ToolCallResult, error) {
+		sessionID := "webui-" + time.Now().Format("20060102T150405.000000000")
+		call := harness.ToolCallRequest{
+			Owner:     owner,
+			Project:   project,
+			SessionID: sessionID,
+			Tool:      tool,
+			Args:      cloneArgs(args),
+		}
+		result, err := rt.ExecuteTool(r.Context(), call)
+		if err != nil || result.Status != "approval_required" {
+			return result, err
+		}
+		record, ok := approvalRecordFromResult(result.Result)
+		if !ok {
+			return result, nil
+		}
+		if _, err := (harness.ApprovalStore{Owner: owner}).SetStatus(record.ID, harness.ApprovalApproved); err != nil {
+			return result, err
+		}
+		call.Args["approval_id"] = record.ID
+		return rt.ExecuteTool(r.Context(), call)
+	}
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := app.owner(r); !ok {
 			http.Redirect(w, r, "/auth/login", http.StatusFound)
@@ -123,7 +146,151 @@ func NewHandler() http.Handler {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, map[string]any{"git": harness.WorkspaceGitInfo(workspace.Root)})
+		response := map[string]any{"git": harness.WorkspaceGitInfo(workspace.Root)}
+		if r.URL.Query().Get("branches") == "true" {
+			response["branches"] = harness.WorkspaceGitBranches(workspace.Root)
+		}
+		if r.URL.Query().Get("status_entries") == "true" {
+			response["status_entries"] = harness.WorkspaceGitStatusEntries(workspace.Root)
+		}
+		writeJSON(w, response)
+	})
+	mux.HandleFunc("POST /api/git/add", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Project string   `json:"project"`
+			Paths   []string `json:"paths"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, err)
+			return
+		}
+		result, err := runOperatorTool(r, owner, req.Project, "git.add", map[string]any{"paths": stringSliceToAny(req.Paths)})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, result)
+	})
+	mux.HandleFunc("POST /api/git/fetch", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Project string `json:"project"`
+			Remote  string `json:"remote"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, err)
+			return
+		}
+		result, err := runOperatorTool(r, owner, req.Project, "git.fetch", map[string]any{"remote": req.Remote, "timeout_ms": 60000})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, result)
+	})
+	mux.HandleFunc("POST /api/git/pull", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Project string `json:"project"`
+			Remote  string `json:"remote"`
+			Branch  string `json:"branch"`
+			FFOnly  bool   `json:"ff_only"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, err)
+			return
+		}
+		result, err := runOperatorTool(r, owner, req.Project, "git.pull", map[string]any{
+			"remote":     req.Remote,
+			"branch":     req.Branch,
+			"ff_only":    req.FFOnly,
+			"timeout_ms": 60000,
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, result)
+	})
+	mux.HandleFunc("POST /api/git/checkout", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Project string `json:"project"`
+			Ref     string `json:"ref"`
+			Create  bool   `json:"create"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, err)
+			return
+		}
+		result, err := runOperatorTool(r, owner, req.Project, "git.checkout", map[string]any{"ref": req.Ref, "create": req.Create})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, result)
+	})
+	mux.HandleFunc("POST /api/git/commit", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Project string `json:"project"`
+			Message string `json:"message"`
+			All     bool   `json:"all"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, err)
+			return
+		}
+		result, err := runOperatorTool(r, owner, req.Project, "git.commit", map[string]any{"message": req.Message, "all": req.All})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, result)
+	})
+	mux.HandleFunc("POST /api/git/push", func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := requireOwner(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Project     string `json:"project"`
+			Remote      string `json:"remote"`
+			Branch      string `json:"branch"`
+			SetUpstream bool   `json:"set_upstream"`
+			Force       bool   `json:"force"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, err)
+			return
+		}
+		result, err := runOperatorTool(r, owner, req.Project, "git.push", map[string]any{
+			"remote":       req.Remote,
+			"branch":       req.Branch,
+			"set_upstream": req.SetUpstream,
+			"force":        req.Force,
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, result)
 	})
 	mux.HandleFunc("POST /api/projects", func(w http.ResponseWriter, r *http.Request) {
 		owner, ok := requireOwner(w, r)
@@ -392,6 +559,40 @@ func splitApprovalPath(path string) (string, string) {
 	return rest, ""
 }
 
+func cloneArgs(args map[string]any) map[string]any {
+	if args == nil {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		out[k] = v
+	}
+	return out
+}
+
+func stringSliceToAny(values []string) []any {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]any, 0, len(values))
+	for _, value := range values {
+		out = append(out, value)
+	}
+	return out
+}
+
+func approvalRecordFromResult(value any) (harness.ApprovalRecord, bool) {
+	result, ok := value.(map[string]any)
+	if !ok {
+		return harness.ApprovalRecord{}, false
+	}
+	record, ok := result["approval"].(harness.ApprovalRecord)
+	if !ok {
+		return harness.ApprovalRecord{}, false
+	}
+	return record, true
+}
+
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
@@ -414,29 +615,68 @@ const indexHTML = `<!doctype html>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
   <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
   <style>
-    :root { --bg:#f6f7f9; --panel:#fff; --line:#d7dce5; --text:#172033; --muted:#667085; --accent:#2563eb; --bad:#b42318; --ok:#067647; }
+    :root { --bg:#eef2f6; --panel:#fbfcfe; --panel-strong:#ffffff; --line:#d7dce5; --line-strong:#b8c2d1; --text:#172033; --muted:#667085; --accent:#0f6c5c; --accent-strong:#0a4b40; --bad:#b42318; --ok:#067647; --ink:#0f1728; --soft:#f2f5f9; }
     * { box-sizing:border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    .shell { min-height:100vh; display:grid; grid-template-columns:300px minmax(460px,1fr) 480px; }
-    aside, main, section { padding:16px; border-right:1px solid var(--line); overflow:auto; max-height:100vh; }
+    body { margin:0; background:radial-gradient(circle at top left, #f7fbff 0, var(--bg) 42%, #e6ecf3 100%); color:var(--text); font:14px/1.45 "Segoe UI",system-ui,-apple-system,BlinkMacSystemFont,sans-serif; }
+    .shell { min-height:100vh; display:grid; grid-template-columns:300px minmax(520px,1fr) 440px; }
+    aside, main, section { padding:18px; border-right:1px solid rgba(184,194,209,.7); overflow:auto; max-height:100vh; }
     section { border-right:0; }
-    h1, h2 { font-size:16px; margin:0 0 12px; }
-    h3 { font-size:13px; margin:14px 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+    aside { background:linear-gradient(180deg, rgba(255,255,255,.92), rgba(245,248,252,.88)); backdrop-filter:blur(10px); }
+    main { background:rgba(251,252,254,.72); }
+    section { background:rgba(247,250,253,.78); }
+    h1, h2 { font-size:16px; margin:0 0 12px; letter-spacing:.01em; }
+    h3 { font-size:12px; margin:14px 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.09em; }
     label { display:block; margin:10px 0 5px; color:var(--muted); font-size:12px; }
-    input, select, button { width:100%; border:1px solid var(--line); border-radius:6px; padding:8px 9px; font:inherit; background:#fff; color:var(--text); }
-    button { margin-top:8px; color:#fff; background:var(--accent); border-color:var(--accent); cursor:pointer; }
-    button.secondary { color:var(--text); background:#fff; border-color:var(--line); }
+    input, select, textarea, button { width:100%; border:1px solid var(--line); border-radius:10px; padding:9px 11px; font:inherit; background:#fff; color:var(--text); }
+    input[type="checkbox"] { width:auto; padding:0; }
+    textarea { min-height:92px; resize:vertical; }
+    button { margin-top:8px; color:#fff; background:linear-gradient(180deg, var(--accent), var(--accent-strong)); border-color:var(--accent-strong); cursor:pointer; font-weight:600; box-shadow:0 8px 20px rgba(15,108,92,.16); }
+    button.secondary { color:var(--text); background:#fff; border-color:var(--line); box-shadow:none; }
     button.danger { background:var(--bad); border-color:var(--bad); }
-    .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:10px; }
+    button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
+    .card { background:linear-gradient(180deg, var(--panel-strong), var(--panel)); border:1px solid rgba(184,194,209,.85); border-radius:14px; padding:12px; margin-bottom:12px; box-shadow:0 10px 28px rgba(15,23,40,.05); }
     .card strong { display:block; }
     .card small { display:block; color:var(--muted); word-break:break-all; }
-    .selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+    .selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset, 0 12px 28px rgba(15,108,92,.12); }
     .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-    .pill { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 7px; color:var(--muted); font-size:12px; margin-right:4px; }
+    .grid3 { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; }
+    .pill { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 7px; color:var(--muted); font-size:12px; margin-right:4px; background:#fff; }
     pre { white-space:pre-wrap; word-break:break-word; background:#101828; color:#f9fafb; border-radius:8px; padding:12px; max-height:420px; overflow:auto; font-size:12px; }
     .muted { color:var(--muted); }
     .ok { color:var(--ok); }
     .bad { color:var(--bad); }
+    .hero { padding:16px; border-radius:18px; background:
+      linear-gradient(135deg, rgba(15,108,92,.10), rgba(255,255,255,.92) 34%, rgba(15,23,40,.02) 100%);
+      border:1px solid rgba(15,108,92,.18);
+      box-shadow:0 16px 40px rgba(15,23,40,.08);
+    }
+    .hero-title { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+    .hero-title h2 { margin-bottom:4px; font-size:22px; }
+    .hero-meta { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 0; }
+    .hero-note { margin-top:10px; padding:10px 12px; border-radius:12px; background:rgba(255,255,255,.78); border:1px solid rgba(184,194,209,.7); }
+    .git-console { margin-top:14px; display:grid; grid-template-columns:1.2fr 1fr; gap:12px; }
+    .git-panel { min-height:100%; }
+    .git-summary { padding:12px; border-radius:14px; background:#0f1728; color:#eff5ff; }
+    .git-summary strong { display:inline; }
+    .git-summary-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; margin-top:10px; }
+    .metric { padding:8px 10px; border-radius:12px; background:rgba(255,255,255,.08); }
+    .metric b { display:block; font-size:16px; color:#fff; }
+    .metric span { font-size:11px; color:rgba(239,245,255,.68); text-transform:uppercase; letter-spacing:.08em; }
+    .toolbar-card { background:rgba(255,255,255,.84); border:1px solid rgba(184,194,209,.75); border-radius:14px; padding:12px; }
+    .toolbar-row { display:grid; grid-template-columns:1.2fr .8fr; gap:8px; align-items:end; }
+    .toolbar-row-3 { display:grid; grid-template-columns:1fr 1fr auto; gap:8px; align-items:end; }
+    .toolbar-actions { display:flex; gap:8px; align-items:center; }
+    .toolbar-actions button { margin-top:0; }
+    .status-list { display:flex; flex-direction:column; gap:8px; max-height:210px; overflow:auto; margin-top:10px; }
+    .status-row { display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:flex-start; padding:8px 10px; border-radius:12px; border:1px solid rgba(184,194,209,.7); background:rgba(255,255,255,.86); }
+    .status-row code { font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; color:var(--ink); word-break:break-word; }
+    .status-tag { min-width:42px; text-align:center; padding:2px 6px; border-radius:999px; background:#eef2f6; color:var(--muted); font-size:11px; font-weight:600; }
+    .status-row.staged { border-color:rgba(6,118,71,.26); }
+    .status-row.untracked { border-color:rgba(15,108,92,.26); }
+    .status-row.modified { border-color:rgba(180,35,24,.18); }
+    .notice { border-radius:12px; padding:10px 12px; border:1px solid rgba(184,194,209,.8); background:#fff; }
+    .notice.ok { background:rgba(6,118,71,.08); border-color:rgba(6,118,71,.18); }
+    .notice.bad { background:rgba(180,35,24,.07); border-color:rgba(180,35,24,.18); }
     .diff { border:1px solid var(--line); border-radius:8px; overflow:hidden; margin-top:6px; background:#0d1117; }
     .diff-file { border-top:1px solid #21262d; }
     .diff-file:first-child { border-top:0; }
@@ -456,7 +696,21 @@ const indexHTML = `<!doctype html>
     .gitline { margin-top:4px; font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; }
     .gitline:empty { display:none; }
     .gitline .branch { color:var(--text); }
+    .card-head { display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:8px; }
+    .stack { display:flex; flex-direction:column; gap:12px; }
+    .tiny { font-size:11px; color:var(--muted); }
     #terminal .hljs { background:transparent; padding:0; }
+    @media (max-width: 1200px) {
+      .shell { grid-template-columns:280px minmax(0,1fr); }
+      section { grid-column:1 / -1; border-top:1px solid rgba(184,194,209,.7); max-height:none; }
+      .git-console { grid-template-columns:1fr; }
+    }
+    @media (max-width: 900px) {
+      .shell { grid-template-columns:1fr; }
+      aside, main, section { max-height:none; border-right:0; border-bottom:1px solid rgba(184,194,209,.7); }
+      .hero-title { flex-direction:column; }
+      .toolbar-row, .toolbar-row-3, .grid2, .grid3, .git-summary-grid { grid-template-columns:1fr; }
+    }
   </style>
 </head>
 <body>
@@ -474,7 +728,73 @@ const indexHTML = `<!doctype html>
       <button onclick="addProject()">Add project</button>
     </aside>
     <main>
-      <h2 id="projectTitle">Default sandbox</h2>
+      <div class="hero">
+        <div class="hero-title">
+          <div>
+            <h2 id="projectTitle">Default sandbox</h2>
+            <div id="projectMeta" class="hero-meta">
+              <span class="pill">No project selected</span>
+            </div>
+          </div>
+          <div class="toolbar-actions">
+            <button class="secondary" style="width:auto" onclick="refreshGitConsole()">Refresh Git</button>
+          </div>
+        </div>
+        <div id="actionStatus" class="hero-note muted">Select a project to use branch, commit, and push controls.</div>
+        <div class="git-console">
+          <div class="git-panel">
+            <div id="gitSummary" class="git-summary">
+              <strong>Git snapshot unavailable</strong>
+              <div class="tiny" style="color:rgba(239,245,255,.7);margin-top:6px">This workspace is not a git repository, or no project is selected.</div>
+            </div>
+          </div>
+          <div class="stack">
+            <div class="toolbar-card">
+              <div class="card-head">
+                <strong>Switch Branch</strong>
+                <span class="tiny">Manual branch control</span>
+              </div>
+              <label>Existing branch</label>
+              <select id="checkoutBranch"></select>
+              <button class="secondary" onclick="checkoutSelectedBranch()">Checkout selected branch</button>
+              <label>New branch</label>
+              <div class="toolbar-row">
+                <input id="newBranch" placeholder="feature/web-console">
+                <button onclick="createBranch()">Create + checkout</button>
+              </div>
+            </div>
+            <div class="toolbar-card">
+              <div class="card-head">
+                <strong>Stage And Sync</strong>
+                <div class="toolbar-actions">
+                  <button class="secondary" style="width:auto" onclick="fetchChanges()">Fetch</button>
+                  <button class="secondary" style="width:auto" onclick="pullChanges()">Pull (ff-only)</button>
+                </div>
+              </div>
+              <div class="toolbar-actions" style="margin-top:8px">
+                <button class="secondary" style="width:auto" onclick="stageAllChanges()">Stage all</button>
+                <button class="secondary" style="width:auto" onclick="stageSelectedChanges()">Stage selected</button>
+              </div>
+              <div id="statusEntries" class="status-list"></div>
+            </div>
+            <div class="toolbar-card">
+              <div class="card-head">
+                <strong>Commit And Push</strong>
+                <span class="tiny">Operator actions</span>
+              </div>
+              <label>Commit message</label>
+              <textarea id="commitMessage" placeholder="Describe this change"></textarea>
+              <button onclick="commitChanges()">Commit staged changes</button>
+              <label>Push remote / branch</label>
+              <div class="toolbar-row-3">
+                <input id="pushRemote" value="origin" placeholder="origin">
+                <input id="pushBranch" placeholder="current branch">
+                <button onclick="pushChanges()">Push</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="grid2">
         <div>
           <h3>Sessions</h3>
@@ -517,12 +837,126 @@ const indexHTML = `<!doctype html>
   </div>
   <script>
     let selectedProject = '';
+    let selectedProjectName = 'Default sandbox';
     let selectedSession = '';
+    let currentGit = null;
+    let currentBranches = [];
+    let currentStatusEntries = [];
     const escapeHTML = (text) => String(text).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     function setDetail(value) {
       const detail = document.getElementById('detail');
       detail.className = 'card';
       detail.innerHTML = '<pre>' + escapeHTML(typeof value === 'string' ? value : JSON.stringify(value, null, 2)) + '</pre>';
+    }
+    function setActionStatus(message, tone='muted') {
+      const box = document.getElementById('actionStatus');
+      box.className = 'hero-note notice ' + tone;
+      box.textContent = message;
+    }
+    function renderProjectMeta(git) {
+      const meta = document.getElementById('projectMeta');
+      const pills = ['<span class="pill">' + escapeHTML(selectedProjectName || 'Default sandbox') + '</span>'];
+      if (selectedProject) pills.push('<span class="pill">project</span>');
+      else pills.push('<span class="pill">sandbox</span>');
+      if (git && git.is_repo) {
+        pills.push('<span class="pill">branch ' + escapeHTML(git.branch || '?') + '</span>');
+        if (git.upstream) pills.push('<span class="pill">upstream ' + escapeHTML(git.upstream) + '</span>');
+      }
+      meta.innerHTML = pills.join('');
+    }
+    function renderGitSummary(git) {
+      const box = document.getElementById('gitSummary');
+      if (!git || !git.is_repo) {
+        box.innerHTML = '<strong>Git snapshot unavailable</strong><div class="tiny" style="color:rgba(239,245,255,.7);margin-top:6px">This workspace is not a git repository, or no project is selected.</div>';
+        return;
+      }
+      const branch = git.branch || '?';
+      const upstream = git.upstream || 'no upstream';
+      box.innerHTML =
+        '<strong>⎇ ' + escapeHTML(branch) + '</strong>'
+        + '<div class="tiny" style="color:rgba(239,245,255,.7);margin-top:6px">upstream: ' + escapeHTML(upstream) + '</div>'
+        + '<div class="git-summary-grid">'
+        + '<div class="metric"><span>Changed files</span><b>' + (git.files_changed || 0) + '</b></div>'
+        + '<div class="metric"><span>Ahead</span><b>' + (git.ahead || 0) + '</b></div>'
+        + '<div class="metric"><span>Behind</span><b>' + (git.behind || 0) + '</b></div>'
+        + '<div class="metric"><span>Line delta</span><b>+' + (git.added || 0) + ' / -' + (git.removed || 0) + '</b></div>'
+        + '</div>';
+    }
+    function populateBranchSelect(branches, git) {
+      const select = document.getElementById('checkoutBranch');
+      select.innerHTML = '';
+      const locals = (branches || []).filter(b => !b.remote);
+      if (!locals.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No local branches';
+        select.appendChild(option);
+        return;
+      }
+      for (const branch of locals) {
+        const option = document.createElement('option');
+        option.value = branch.name;
+        option.textContent = branch.current ? branch.name + ' (current)' : branch.name;
+        if (git && git.branch === branch.name) option.selected = true;
+        select.appendChild(option);
+      }
+    }
+    function renderStatusEntries(entries) {
+      const box = document.getElementById('statusEntries');
+      box.innerHTML = '';
+      const items = entries || [];
+      if (!items.length) {
+        box.innerHTML = '<div class="tiny">No changed files.</div>';
+        return;
+      }
+      for (const entry of items) {
+        const row = document.createElement('label');
+        const tone = entry.untracked ? ' untracked' : (entry.staged ? ' staged' : ' modified');
+        row.className = 'status-row' + tone;
+        const status = entry.untracked ? 'new' : ((entry.index_status || ' ') + (entry.worktree_status || ' ')).trim() || 'mod';
+        row.innerHTML =
+          '<input type="checkbox" data-path="' + escapeHTML(entry.path) + '">'
+          + '<div><code>' + escapeHTML(entry.path) + '</code>'
+          + (entry.original_path ? '<div class="tiny">from ' + escapeHTML(entry.original_path) + '</div>' : '')
+          + '</div>'
+          + '<span class="status-tag">' + escapeHTML(status) + '</span>';
+        box.appendChild(row);
+      }
+    }
+    function selectedStatusPaths() {
+      return Array.from(document.querySelectorAll('#statusEntries input[type="checkbox"]:checked'))
+        .map(node => node.dataset.path)
+        .filter(Boolean);
+    }
+    async function refreshGitConsole() {
+      try {
+        const qs = new URLSearchParams({ project: selectedProject, branches: 'true', status_entries: 'true' });
+        const res = await fetch('/api/git?' + qs.toString());
+        const data = await res.json();
+        currentGit = data.git || null;
+        currentBranches = data.branches || [];
+        currentStatusEntries = data.status_entries || [];
+        renderProjectMeta(currentGit);
+        renderGitSummary(currentGit);
+        populateBranchSelect(currentBranches, currentGit);
+        renderStatusEntries(currentStatusEntries);
+        document.getElementById('pushRemote').value = (currentGit && currentGit.remote) ? 'origin' : 'origin';
+        document.getElementById('pushBranch').value = (currentGit && currentGit.branch) ? currentGit.branch : '';
+        if (currentGit && currentGit.is_repo) {
+          setActionStatus('Git controls ready for ' + (currentGit.branch || 'current branch') + '.', 'ok');
+        } else {
+          setActionStatus('Select a git-backed project to use branch, commit, and push controls.', 'muted');
+        }
+      } catch (e) {
+        currentGit = null;
+        currentBranches = [];
+        currentStatusEntries = [];
+        renderProjectMeta(null);
+        renderGitSummary(null);
+        populateBranchSelect([], null);
+        renderStatusEntries([]);
+        setActionStatus('Could not load git info: ' + e, 'bad');
+      }
     }
     async function refreshProjects() {
       const res = await fetch('/api/projects');
@@ -530,6 +964,7 @@ const indexHTML = `<!doctype html>
       const projects = data.projects || [];
       if (selectedProject && !projects.some(p => p.id === selectedProject)) {
         selectedProject = '';
+        selectedProjectName = 'Default sandbox';
         selectedSession = '';
         document.getElementById('projectTitle').textContent = 'Default sandbox';
       }
@@ -547,7 +982,8 @@ const indexHTML = `<!doctype html>
         div.onclick = () => selectProject(p.id, p.name);
         list.appendChild(div);
       }
-      updateGitBadges();
+      await updateGitBadges();
+      await refreshGitConsole();
       await refreshSessions();
       await refreshHistory();
     }
@@ -569,6 +1005,7 @@ const indexHTML = `<!doctype html>
     }
     async function selectProject(id, name) {
       selectedProject = id;
+      selectedProjectName = name;
       selectedSession = '';
       document.getElementById('projectTitle').textContent = name;
       await refreshProjects();
@@ -790,6 +1227,87 @@ const indexHTML = `<!doctype html>
       setDetail(await res.json());
       await refreshProjects();
     }
+    async function performGitAction(url, payload, successMessage) {
+      try {
+        const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+        const data = await res.json();
+        setDetail(data);
+        if (!res.ok || data.error || data.status === 'error') {
+          setActionStatus((data.error || data.status || 'Git action failed') + (data.error ? '' : ''), 'bad');
+          return;
+        }
+        if (data.session_id) {
+          selectedSession = data.session_id;
+          await refreshSessions();
+          await refreshToolCalls();
+        }
+        await refreshGitConsole();
+        await refreshHistory();
+        setActionStatus(successMessage, 'ok');
+      } catch (e) {
+        setActionStatus('Git action failed: ' + e, 'bad');
+      }
+    }
+    async function checkoutSelectedBranch() {
+      const ref = document.getElementById('checkoutBranch').value;
+      if (!ref) {
+        setActionStatus('Choose a branch to checkout.', 'bad');
+        return;
+      }
+      await performGitAction('/api/git/checkout', { project: selectedProject, ref, create: false }, 'Checked out ' + ref + '.');
+    }
+    async function createBranch() {
+      const ref = document.getElementById('newBranch').value.trim();
+      if (!ref) {
+        setActionStatus('Enter a branch name to create.', 'bad');
+        return;
+      }
+      await performGitAction('/api/git/checkout', { project: selectedProject, ref, create: true }, 'Created and checked out ' + ref + '.');
+      document.getElementById('newBranch').value = '';
+    }
+    async function stageAllChanges() {
+      const paths = (currentStatusEntries || []).map(entry => entry.path).filter(Boolean);
+      if (!paths.length) {
+        setActionStatus('No changed files to stage.', 'bad');
+        return;
+      }
+      await performGitAction('/api/git/add', { project: selectedProject, paths }, 'Staged all changed files.');
+    }
+    async function stageSelectedChanges() {
+      const paths = selectedStatusPaths();
+      if (!paths.length) {
+        setActionStatus('Select at least one file to stage.', 'bad');
+        return;
+      }
+      await performGitAction('/api/git/add', { project: selectedProject, paths }, 'Staged selected files.');
+    }
+    async function fetchChanges() {
+      const remote = document.getElementById('pushRemote').value.trim() || 'origin';
+      await performGitAction('/api/git/fetch', { project: selectedProject, remote }, 'Fetched from ' + remote + '.');
+    }
+    async function pullChanges() {
+      const remote = document.getElementById('pushRemote').value.trim() || 'origin';
+      const branch = document.getElementById('pushBranch').value.trim() || (currentGit && currentGit.branch) || '';
+      await performGitAction('/api/git/pull', { project: selectedProject, remote, branch, ff_only: true }, 'Pulled latest changes (ff-only).');
+    }
+    async function commitChanges() {
+      const message = document.getElementById('commitMessage').value.trim();
+      if (!message) {
+        setActionStatus('Commit message is required.', 'bad');
+        return;
+      }
+      await performGitAction('/api/git/commit', { project: selectedProject, message, all: false }, 'Commit created.');
+      document.getElementById('commitMessage').value = '';
+    }
+    async function pushChanges() {
+      const remote = document.getElementById('pushRemote').value.trim() || 'origin';
+      const branch = document.getElementById('pushBranch').value.trim() || (currentGit && currentGit.branch) || '';
+      if (!branch) {
+        setActionStatus('Branch name is required before push.', 'bad');
+        return;
+      }
+      await performGitAction('/api/git/push', { project: selectedProject, remote, branch, set_upstream: true, force: false }, 'Pushed ' + branch + ' to ' + remote + '.');
+    }
     async function refreshAccessMode() {
       const res = await fetch('/api/settings/access-mode');
       const data = await res.json();
@@ -850,9 +1368,11 @@ const indexHTML = `<!doctype html>
         if (selectedSession) refreshToolCalls();
         refreshSessions();
         updateGitBadges();
+        refreshGitConsole();
       } else if (ev.type === 'history') {
         refreshHistory();
         updateGitBadges();
+        refreshGitConsole();
       } else if (ev.type === 'approval') {
         refreshApprovals();
       } else if (ev.type === 'project') {

@@ -1,16 +1,19 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/TimLai666/mcp-harness/internal/harness"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -42,6 +45,23 @@ func TestConsoleHTMLHasNoChatHarnessRunner(t *testing.T) {
 		`updateGitBadges`,
 		`/api/github`,
 		`refreshGitHub`,
+		`/api/git/checkout`,
+		`/api/git/add`,
+		`/api/git/fetch`,
+		`/api/git/pull`,
+		`/api/git/commit`,
+		`/api/git/push`,
+		`Switch Branch`,
+		`Stage And Sync`,
+		`Commit And Push`,
+		`refreshGitConsole`,
+		`checkoutSelectedBranch`,
+		`stageAllChanges`,
+		`stageSelectedChanges`,
+		`fetchChanges`,
+		`pullChanges`,
+		`commitChanges`,
+		`pushChanges`,
 	} {
 		if !strings.Contains(indexHTML, required) {
 			t.Fatalf("console HTML should contain %q", required)
@@ -250,6 +270,165 @@ func TestRemoteMCPEndpointCanRequireBearerToken(t *testing.T) {
 	defer session.Close()
 }
 
+func TestGitControlEndpoints(t *testing.T) {
+	t.Setenv("MCP_HARNESS_HOME", t.TempDir())
+	repo := filepath.Join(t.TempDir(), "repo")
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	peer := filepath.Join(t.TempDir(), "peer")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(remote, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, repo, "init")
+	mustRunGit(t, repo, "config", "user.email", "test@example.com")
+	mustRunGit(t, repo, "config", "user.name", "Test User")
+	mustRunGit(t, remote, "init", "--bare")
+	if err := os.WriteFile(filepath.Join(repo, "note.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, repo, "add", "note.txt")
+	mustRunGit(t, repo, "commit", "-m", "init")
+	mustRunGit(t, repo, "remote", "add", "origin", remote)
+	current := strings.TrimSpace(runGitOutputWeb(t, repo, "branch", "--show-current"))
+	mustRunGit(t, repo, "push", "-u", "origin", current)
+	if _, err := (harness.ProjectRegistry{}).Add(repo, "Repo", "repo", "", harness.ModeWork); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	res, err := http.Get(server.URL + "/api/git?project=repo&branches=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("git info returned %d", res.StatusCode)
+	}
+	var gitPayload struct {
+		Git           harness.GitInfo          `json:"git"`
+		Branches      []harness.GitBranch      `json:"branches"`
+		StatusEntries []harness.GitStatusEntry `json:"status_entries"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&gitPayload); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if !gitPayload.Git.IsRepo || len(gitPayload.Branches) == 0 {
+		t.Fatalf("expected git info + branches, got %#v", gitPayload)
+	}
+
+	postJSON := func(path string, body any) map[string]any {
+		t.Helper()
+		buf, _ := json.Marshal(body)
+		res, err := http.Post(server.URL+path, "application/json", bytes.NewReader(buf))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			var payload map[string]any
+			_ = json.NewDecoder(res.Body).Decode(&payload)
+			t.Fatalf("POST %s returned %d: %#v", path, res.StatusCode, payload)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["status"] != "ok" {
+			t.Fatalf("POST %s expected ok, got %#v", path, payload)
+		}
+		return payload
+	}
+
+	postJSON("/api/git/checkout", map[string]any{"project": "repo", "ref": "feature/web-ui", "create": true})
+	if got := strings.TrimSpace(runGitOutputWeb(t, repo, "branch", "--show-current")); got != "feature/web-ui" {
+		t.Fatalf("expected checked out feature/web-ui, got %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "note.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "draft.txt"), []byte("draft\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err = http.Get(server.URL + "/api/git?project=repo&status_entries=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("git status entries returned %d", res.StatusCode)
+	}
+	var statusPayload struct {
+		StatusEntries []harness.GitStatusEntry `json:"status_entries"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&statusPayload); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	var sawTracked, sawUntracked bool
+	for _, entry := range statusPayload.StatusEntries {
+		if entry.Path == "note.txt" && entry.Unstaged {
+			sawTracked = true
+		}
+		if entry.Path == "draft.txt" && entry.Untracked {
+			sawUntracked = true
+		}
+	}
+	if !sawTracked || !sawUntracked {
+		t.Fatalf("expected tracked + untracked status entries, got %#v", statusPayload.StatusEntries)
+	}
+
+	postJSON("/api/git/add", map[string]any{"project": "repo", "paths": []string{"note.txt", "draft.txt"}})
+	statusShort := runGitOutputWeb(t, repo, "status", "--short")
+	if !strings.Contains(statusShort, "M  note.txt") || !strings.Contains(statusShort, "A  draft.txt") {
+		t.Fatalf("expected staged files after git/add, got %q", statusShort)
+	}
+	postJSON("/api/git/commit", map[string]any{"project": "repo", "message": "web ui change", "all": false})
+	postJSON("/api/git/push", map[string]any{"project": "repo", "remote": "origin", "branch": "feature/web-ui", "set_upstream": true})
+	if out := runGitDirOutputWeb(t, remote, "show-ref", "--verify", "refs/heads/feature/web-ui"); !strings.Contains(out, "refs/heads/feature/web-ui") {
+		t.Fatalf("expected pushed remote branch, got %q", out)
+	}
+
+	mustRunGit(t, "", "clone", remote, peer)
+	mustRunGit(t, peer, "config", "user.email", "test@example.com")
+	mustRunGit(t, peer, "config", "user.name", "Test User")
+	mustRunGit(t, peer, "checkout", "feature/web-ui")
+	if err := os.WriteFile(filepath.Join(peer, "note.txt"), []byte("three\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, peer, "add", "note.txt")
+	mustRunGit(t, peer, "commit", "-m", "remote update")
+	mustRunGit(t, peer, "push", "origin", "feature/web-ui")
+
+	postJSON("/api/git/fetch", map[string]any{"project": "repo", "remote": "origin"})
+	res, err = http.Get(server.URL + "/api/git?project=repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("git info after fetch returned %d", res.StatusCode)
+	}
+	var fetchedPayload struct {
+		Git harness.GitInfo `json:"git"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&fetchedPayload); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if fetchedPayload.Git.Behind < 1 {
+		t.Fatalf("expected branch to be behind after fetch, got %#v", fetchedPayload.Git)
+	}
+
+	postJSON("/api/git/pull", map[string]any{"project": "repo", "remote": "origin", "branch": "feature/web-ui", "ff_only": true})
+	if content, err := os.ReadFile(filepath.Join(repo, "note.txt")); err != nil {
+		t.Fatal(err)
+	} else if strings.TrimSpace(string(content)) != "three" {
+		t.Fatalf("expected pulled note.txt content, got %q", content)
+	}
+}
+
 func bearerHTTPClient(token string) *http.Client {
 	return &http.Client{Transport: bearerTransport{token: token, base: http.DefaultTransport}}
 }
@@ -272,4 +451,37 @@ func containsJSON(t *testing.T, value any, needle string) bool {
 		t.Fatal(err)
 	}
 	return strings.Contains(string(data), needle)
+}
+
+func mustRunGit(t *testing.T, root string, args ...string) {
+	t.Helper()
+	cmdArgs := args
+	if root != "" {
+		cmdArgs = append([]string{"-C", root}, args...)
+	}
+	cmd := exec.Command("git", cmdArgs...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+}
+
+func runGitOutputWeb(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
+func runGitDirOutputWeb(t *testing.T, gitDir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"--git-dir", gitDir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git --git-dir %v failed: %v\n%s", args, err, out)
+	}
+	return string(out)
 }

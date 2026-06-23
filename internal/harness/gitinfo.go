@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,22 @@ type GitInfo struct {
 	Ahead    int    `json:"ahead,omitempty"`
 	Behind   int    `json:"behind,omitempty"`
 	Remote   string `json:"remote,omitempty"`
+}
+
+type GitBranch struct {
+	Name    string `json:"name"`
+	Current bool   `json:"current,omitempty"`
+	Remote  bool   `json:"remote,omitempty"`
+}
+
+type GitStatusEntry struct {
+	Path           string `json:"path"`
+	OriginalPath   string `json:"original_path,omitempty"`
+	IndexStatus    string `json:"index_status,omitempty"`
+	WorktreeStatus string `json:"worktree_status,omitempty"`
+	Staged         bool   `json:"staged,omitempty"`
+	Unstaged       bool   `json:"unstaged,omitempty"`
+	Untracked      bool   `json:"untracked,omitempty"`
 }
 
 // WorkspaceGitInfo inspects a workspace root and returns its branch and a diff
@@ -53,6 +70,75 @@ func WorkspaceGitInfo(root string) GitInfo {
 		info.Remote = strings.TrimSpace(out)
 	}
 	return info
+}
+
+func WorkspaceGitBranches(root string) []GitBranch {
+	out, ok := runGitInfo(root, "branch", "-a", "--no-color")
+	if !ok {
+		return nil
+	}
+	var branches []GitBranch
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		current := strings.HasPrefix(line, "* ")
+		line = strings.TrimSpace(strings.TrimPrefix(line, "* "))
+		if strings.Contains(line, "->") {
+			continue
+		}
+		remote := strings.HasPrefix(line, "remotes/")
+		name := line
+		if remote {
+			name = strings.TrimPrefix(line, "remotes/")
+		}
+		branches = append(branches, GitBranch{Name: name, Current: current, Remote: remote})
+	}
+	sort.SliceStable(branches, func(i, j int) bool {
+		if branches[i].Current != branches[j].Current {
+			return branches[i].Current
+		}
+		if branches[i].Remote != branches[j].Remote {
+			return !branches[i].Remote
+		}
+		return branches[i].Name < branches[j].Name
+	})
+	return branches
+}
+
+func WorkspaceGitStatusEntries(root string) []GitStatusEntry {
+	out, ok := runGitInfo(root, "status", "--porcelain=v1")
+	if !ok {
+		return nil
+	}
+	var entries []GitStatusEntry
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 3 {
+			continue
+		}
+		indexStatus := string(line[0])
+		worktreeStatus := string(line[1])
+		payload := strings.TrimSpace(line[3:])
+		entry := GitStatusEntry{
+			IndexStatus:    indexStatus,
+			WorktreeStatus: worktreeStatus,
+			Staged:         indexStatus != " " && indexStatus != "?",
+			Unstaged:       worktreeStatus != " ",
+			Untracked:      indexStatus == "?" && worktreeStatus == "?",
+		}
+		if strings.Contains(payload, " -> ") {
+			parts := strings.SplitN(payload, " -> ", 2)
+			entry.OriginalPath = parts[0]
+			entry.Path = parts[1]
+		} else {
+			entry.Path = payload
+		}
+		if entry.Path != "" {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
 }
 
 func parseNumstat(out string) (added, removed, files int) {
