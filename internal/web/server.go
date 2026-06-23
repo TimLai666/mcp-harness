@@ -689,8 +689,9 @@ const indexHTML = `<!doctype html>
     .diff-file:first-child { border-top:0; }
     .diff-file-head { background:#161b22; color:#c9d1d9; padding:5px 10px; font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; word-break:break-all; }
     .diff-table { width:100%; border-collapse:collapse; table-layout:fixed; font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; }
+    .diff-table col.ln-col { width:3.25ch; }
     .diff-table td { vertical-align:top; padding:0; }
-    .diff-table td.ln { width:4ch; text-align:right; padding:0 4px; color:#6e7681; background:#0d1117; user-select:none; border-right:1px solid #21262d; white-space:nowrap; }
+    .diff-table td.ln { text-align:right; padding:0 3px 0 2px; color:#6e7681; background:#0d1117; user-select:none; border-right:1px solid #21262d; white-space:nowrap; font-variant-numeric:tabular-nums; }
     .diff-table td.code { padding:0 8px; white-space:pre-wrap; word-break:break-word; color:#c9d1d9; }
     .diff-table td.code .hljs { background:transparent; padding:0; display:inline; }
     .diff-table tr.ctx td.code { color:#9da7b3; }
@@ -1170,7 +1171,7 @@ const indexHTML = `<!doctype html>
           const m = line.match(/^diff --git a\/(.*) b\/(.*)$/);
           const path = m ? m[2] : line.slice('diff --git '.length);
           lang = diffLang(path);
-          html += '<div class="diff-file"><div class="diff-file-head">' + escapeHTML(path) + '</div><table class="diff-table">';
+          html += '<div class="diff-file"><div class="diff-file-head">' + escapeHTML(path) + '</div><table class="diff-table"><colgroup><col class="ln-col"><col><col class="ln-col"><col></colgroup>';
           open = true;
         } else if (!open) {
           continue;
