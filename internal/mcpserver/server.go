@@ -387,6 +387,29 @@ type grepArgs struct {
 	Invert          bool   `json:"invert,omitempty" jsonschema:"show lines that do NOT match"`
 }
 
+type mkdirArgs struct {
+	Project    string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID  string `json:"session_id,omitempty" jsonschema:"optional session id to group related tool calls"`
+	Path       string `json:"path" jsonschema:"workspace-relative directory path to create"`
+	ApprovalID string `json:"approval_id,omitempty" jsonschema:"approval id returned by a prior approval_required result, after an operator approved it"`
+}
+
+type moveArgs struct {
+	Project         string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID       string `json:"session_id,omitempty" jsonschema:"optional session id to group related tool calls"`
+	SourcePath      string `json:"source_path" jsonschema:"workspace-relative path to move or rename"`
+	DestinationPath string `json:"destination_path" jsonschema:"workspace-relative destination path"`
+	ApprovalID      string `json:"approval_id,omitempty" jsonschema:"approval id returned by a prior approval_required result, after an operator approved it"`
+}
+
+type deleteArgs struct {
+	Project    string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
+	SessionID  string `json:"session_id,omitempty" jsonschema:"optional session id to group related tool calls"`
+	Path       string `json:"path" jsonschema:"workspace-relative path to delete"`
+	Recursive  bool   `json:"recursive,omitempty" jsonschema:"delete directories recursively"`
+	ApprovalID string `json:"approval_id,omitempty" jsonschema:"approval id returned by a prior approval_required result, after an operator approved it"`
+}
+
 type writeFileArgs struct {
 	Project    string `json:"project,omitempty" jsonschema:"optional project id, name, or absolute path; empty uses the default sandbox"`
 	SessionID  string `json:"session_id,omitempty" jsonschema:"optional session id to group related tool calls"`
@@ -439,6 +462,27 @@ func registerWorkspaceTools(server *mcp.Server, runtime *harness.Runtime) {
 		Description: "Fast text search using ripgrep. Supports glob/type filters, context lines, regex, fixed strings, and more.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args grepArgs) (*mcp.CallToolResult, any, error) {
 		return exec(ctx, runtime, "workspace.grep", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "workspace_mkdir",
+		Description: "Create a workspace directory (and any missing parents). This mutates files and follows the same approval flow as workspace_write_file.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args mkdirArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "workspace.mkdir", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "workspace_move",
+		Description: "Move or rename a workspace file or directory. This mutates files and follows the same approval flow as workspace_write_file.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args moveArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "workspace.move", args.Project, args.SessionID, toArgs(args))
+	})
+
+	addTool(server, runtime, &mcp.Tool{
+		Name:        "workspace_delete",
+		Description: "Delete a workspace file or directory. Directories require recursive=true for recursive deletion. This mutates files and follows the same approval flow as workspace_write_file.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args deleteArgs) (*mcp.CallToolResult, any, error) {
+		return exec(ctx, runtime, "workspace.delete", args.Project, args.SessionID, toArgs(args))
 	})
 
 	addTool(server, runtime, &mcp.Tool{
@@ -658,7 +702,7 @@ type githubRepoViewArgs struct {
 func registerGitTools(server *mcp.Server, runtime *harness.Runtime) {
 	addTool(server, runtime, &mcp.Tool{
 		Name:        "git_status",
-		Description: "Show git status (branch and short status) for a workspace.",
+		Description: "Show git status for a workspace, including the usual short status text plus structured branch/upstream/ahead-behind summary.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args gitStatusArgs) (*mcp.CallToolResult, any, error) {
 		return exec(ctx, runtime, "git.status", args.Project, args.SessionID, toArgs(args))
 	})

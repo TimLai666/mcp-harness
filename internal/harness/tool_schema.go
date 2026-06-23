@@ -84,6 +84,26 @@ func BuiltinToolSchemas() map[string]ToolSchema {
 				"invert":           {Type: ArgBool, Description: "Show lines that do NOT match (-v)."},
 			},
 		},
+		"workspace.mkdir": {
+			Description: "Create a directory (and any missing parents) in work mode.",
+			Args: map[string]ArgSchema{
+				"path": {Type: ArgString, Required: true},
+			},
+		},
+		"workspace.move": {
+			Description: "Move or rename a workspace file or directory in work mode.",
+			Args: map[string]ArgSchema{
+				"source_path":      {Type: ArgString, Required: true},
+				"destination_path": {Type: ArgString, Required: true},
+			},
+		},
+		"workspace.delete": {
+			Description: "Delete a workspace file or directory in work mode. Deleting a directory recursively requires recursive=true.",
+			Args: map[string]ArgSchema{
+				"path":      {Type: ArgString, Required: true},
+				"recursive": {Type: ArgBool},
+			},
+		},
 		"workspace.apply_patch": {
 			Description: "Apply a harness patch in work mode.",
 			Args: map[string]ArgSchema{
@@ -106,7 +126,7 @@ func BuiltinToolSchemas() map[string]ToolSchema {
 				"timeout_ms": {Type: ArgInt},
 			},
 		},
-		"git.status": {Description: "Run git status."},
+		"git.status": {Description: "Run git status and return a structured git_info summary."},
 		"git.diff": {
 			Description: "Run git diff.",
 			Args: map[string]ArgSchema{

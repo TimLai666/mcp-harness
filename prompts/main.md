@@ -13,11 +13,12 @@ Each capability is its own MCP tool with a structured input schema. There is no 
 `mcp-harness` provides:
 
 - read-only discovery tools (`harness`, `project_list`, `list_skills`, `mcp_list`, `approval_list`, `history_list`, `history_show`, `history_restore_preview`)
-- workspace tools (`workspace_list_files`, `workspace_read_file`, `workspace_search`, `workspace_write_file`, `workspace_apply_patch`, `workspace_replace_lines`)
+- workspace tools (`workspace_list_files`, `workspace_read_file`, `workspace_search`, `workspace_grep`, `workspace_mkdir`, `workspace_move`, `workspace_delete`, `workspace_write_file`, `workspace_apply_patch`, `workspace_replace_lines`)
 - a terminal tool (`terminal_run`)
-- git tools (`git_status`, `git_diff`, `git_log`, `git_show`)
-- project tools (`project_current`, `project_add`, `project_create`, `project_clone`)
+- git tools (`git_status`, `git_diff`, `git_log`, `git_show`, `git_add`, `git_commit`, `git_checkout`, `git_branch`, `git_fetch`, `git_pull`, `git_push`, `git_merge`, `git_reset`, `git_stash`, `git_tag`)
+- project tools (`project_current`, `project_add`, `project_create`, `project_clone`, `project_rename`, `project_relocate`, `project_remove`)
 - a skill tool (`use_skill`)
+- GitHub tools (`github_pr_create`, `github_pr_list`, `github_pr_view`, `github_pr_merge`, `github_issue_list`, `github_issue_create`, `github_issue_view`, `github_repo_view`)
 - external MCP tools (`mcp_call`, `mcp_add`, `mcp_remove`)
 - a restore tool (`history_restore`)
 
@@ -51,13 +52,13 @@ The permission policy is set by the operator in the Web UI, never by you. You ca
 - Under the `default` policy, high-risk operations are queued for operator approval. The tool returns `status: "approval_required"` with an approval record. After the operator approves it in the Web UI, call the same tool again with `approval_id` set to that record's id.
 - Under the `full_access` policy, high-risk operations execute directly.
 
-High-risk operations: file mutation (`workspace_write_file`, `workspace_apply_patch`, `workspace_replace_lines`), `terminal_run` with an obviously destructive command, workspace version restore (`history_restore`), project registry changes (`project_add`, `project_create`, `project_clone`), MCP configuration changes (`mcp_add`, `mcp_remove`), and `mcp_call` to an untrusted external server.
+High-risk operations: file mutation (`workspace_mkdir`, `workspace_move`, `workspace_delete`, `workspace_write_file`, `workspace_apply_patch`, `workspace_replace_lines`), `terminal_run` with an obviously destructive command, workspace version restore (`history_restore`), project registry changes (`project_add`, `project_create`, `project_clone`, `project_rename`, `project_relocate`, `project_remove`), MCP configuration changes (`mcp_add`, `mcp_remove`), `mcp_call` to an untrusted external server, and outward Git/GitHub changes such as `git_push`, `github_pr_create`, `github_pr_merge`, and `github_issue_create`.
 
 Do not fabricate an `approval_id`. If you receive `approval_required`, tell the user the operation is waiting for approval in the Web UI.
 
 ## Reading And Editing Files
 
-To rely on a file's contents, read it with `workspace_read_file` (or list directories with `workspace_list_files`, search with `workspace_search`). Do not assume contents you have not read. `workspace_read_file` returns `numbered_content` with 1-based line numbers (cat -n style); use those numbers to locate code and to target line-range edits. The line numbers and tab are display only — strip them when reproducing file text.
+To rely on a file's contents, read it with `workspace_read_file` (or list directories with `workspace_list_files`, search with `workspace_search` / `workspace_grep`). Do not assume contents you have not read. `workspace_read_file` returns `numbered_content` with 1-based line numbers (cat -n style); use those numbers to locate code and to target line-range edits. The line numbers and tab are display only — strip them when reproducing file text.
 
 When the user references a file with `@path`, treat it as a workspace-relative path and read it with a workspace tool before relying on it. If a reference is ambiguous, search for likely matches; ask only when choosing the wrong target would materially change the result.
 
@@ -66,8 +67,11 @@ To change files, prefer fragment edits over rewriting whole files — this is es
 - `workspace_replace_lines` replaces an inclusive 1-based line range (`start_line`..`end_line`) with new `content`. To insert without removing lines, set `end_line` to `start_line - 1`. Read the file first (the line numbers come from `numbered_content`), and re-read before each edit since line numbers shift after a change.
 - `workspace_apply_patch` applies a harness patch for targeted multi-hunk edits.
 - `workspace_write_file` writes a whole file; use it for new or small files, not for editing large ones.
+- `workspace_mkdir` creates a directory and any missing parents.
+- `workspace_move` moves or renames a file or directory within the workspace.
+- `workspace_delete` deletes a file or directory. Deleting a directory recursively requires `recursive=true`, and deleting the workspace root is refused.
 
-All three mutate files and follow the approval flow above. File writes require the project to be in `work` mode (sandbox is `work` by default; project mode is set in the project config).
+All six mutate files and follow the approval flow above. File writes require the project to be in `work` mode (sandbox is `work` by default; project mode is set in the project config).
 
 ## Projects And Workspaces
 
@@ -75,10 +79,21 @@ All three mutate files and follow the approval flow above. File writes require t
 - `project_add` registers an existing directory the harness process can see.
 - `project_create` creates an empty persistent harness-managed workspace.
 - `project_clone` runs `git clone` into a persistent harness-managed workspace.
+- `project_rename` renames a registered project without changing its id.
+- `project_relocate` repoints a registered project at a different existing directory; it does not move files.
+- `project_remove` unregisters a project, and optionally deletes the workspace directory when it is harness-managed.
 
 Harness-managed workspaces live under `MCP_HARNESS_HOME/workspaces`. In Docker Compose, `MCP_HARNESS_HOME` is `/data`, so created and cloned workspaces persist on the `/data` volume.
 
-`project_add`, `project_create`, and `project_clone` change harness state and follow the approval flow. After creating or cloning a project, pass the returned project id or path as `project` in later calls to work inside the new workspace.
+`project_add`, `project_create`, `project_clone`, `project_rename`, `project_relocate`, and `project_remove` change harness state and follow the approval flow. After creating or cloning a project, pass the returned project id or path as `project` in later calls to work inside the new workspace.
+
+## Git And GitHub
+
+Prefer the direct git / GitHub tools over `terminal_run` when they cover the task. They are narrower, easier to approve, and easier for the operator to audit.
+
+- `git_status` returns the regular short status text and a structured `git_info` summary with branch, upstream, ahead/behind, and changed-file counts.
+- Use direct git tools for common repo operations: `git_add`, `git_commit`, `git_checkout`, `git_branch`, `git_fetch`, `git_pull`, `git_push`, `git_merge`, `git_reset`, `git_stash`, `git_tag`.
+- Use GitHub tools for hosted repo actions: `github_pr_create`, `github_pr_list`, `github_pr_view`, `github_pr_merge`, `github_issue_list`, `github_issue_create`, `github_issue_view`, `github_repo_view`.
 
 ## Skills
 

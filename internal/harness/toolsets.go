@@ -48,6 +48,9 @@ func NewToolsetRegistry(workspace Workspace, skills *SkillRegistry, sessionID st
 		"workspace.read_file":     r.workspaceReadFile,
 		"workspace.search":        r.workspaceSearch,
 		"workspace.grep":          r.workspaceGrep,
+		"workspace.mkdir":         r.workspaceMkdir,
+		"workspace.move":          r.workspaceMove,
+		"workspace.delete":        r.workspaceDelete,
 		"workspace.apply_patch":   r.workspaceApplyPatch,
 		"workspace.write_file":    r.workspaceWriteFile,
 		"workspace.replace_lines": r.workspaceReplaceLines,
@@ -176,7 +179,7 @@ func (r *ToolsetRegistry) toolsetAllowed(tool string) bool {
 
 func (r *ToolsetRegistry) approvalReason(call HarnessCall) string {
 	switch call.Tool {
-	case "workspace.apply_patch", "workspace.write_file", "workspace.replace_lines":
+	case "workspace.apply_patch", "workspace.write_file", "workspace.replace_lines", "workspace.mkdir", "workspace.move", "workspace.delete":
 		return "File mutation requires approval."
 	case "history.restore":
 		return "Restoring a workspace version modifies files and requires approval."
@@ -447,6 +450,109 @@ func (r *ToolsetRegistry) workspaceGrep(ctx context.Context, args map[string]any
 	return result, nil
 }
 
+func (r *ToolsetRegistry) workspaceMkdir(ctx context.Context, args map[string]any) (any, error) {
+	if r.workspace.Mode != ModeWork {
+		return nil, fmt.Errorf("workspace.mkdir requires mode=work")
+	}
+	path, err := ResolveInside(r.workspace.Root, mustString(args, "path"))
+	if err != nil {
+		return nil, err
+	}
+	created := true
+	if info, err := os.Stat(path); err == nil {
+		if !info.IsDir() {
+			return nil, fmt.Errorf("path exists and is not a directory: %s", Rel(r.workspace.Root, path))
+		}
+		created = false
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return nil, err
+	}
+	return map[string]any{"path": Rel(r.workspace.Root, path), "created": created}, nil
+}
+
+func (r *ToolsetRegistry) workspaceMove(ctx context.Context, args map[string]any) (any, error) {
+	if r.workspace.Mode != ModeWork {
+		return nil, fmt.Errorf("workspace.move requires mode=work")
+	}
+	source, err := ResolveInside(r.workspace.Root, mustString(args, "source_path"))
+	if err != nil {
+		return nil, err
+	}
+	destination, err := ResolveInside(r.workspace.Root, mustString(args, "destination_path"))
+	if err != nil {
+		return nil, err
+	}
+	if source == r.workspace.Root {
+		return nil, fmt.Errorf("refusing to move workspace root")
+	}
+	if destination == r.workspace.Root {
+		return nil, fmt.Errorf("destination cannot be the workspace root")
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(destination); err == nil {
+		return nil, fmt.Errorf("destination already exists: %s", Rel(r.workspace.Root, destination))
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(source, destination); err != nil {
+		return nil, err
+	}
+	kind := "file"
+	if info.IsDir() {
+		kind = "dir"
+	}
+	return map[string]any{
+		"source_path":      Rel(r.workspace.Root, source),
+		"destination_path": Rel(r.workspace.Root, destination),
+		"type":             kind,
+	}, nil
+}
+
+func (r *ToolsetRegistry) workspaceDelete(ctx context.Context, args map[string]any) (any, error) {
+	if r.workspace.Mode != ModeWork {
+		return nil, fmt.Errorf("workspace.delete requires mode=work")
+	}
+	path, err := ResolveInside(r.workspace.Root, mustString(args, "path"))
+	if err != nil {
+		return nil, err
+	}
+	if path == r.workspace.Root {
+		return nil, fmt.Errorf("refusing to delete workspace root")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	recursive := getBool(args, "recursive", false)
+	kind := "file"
+	if info.IsDir() {
+		kind = "dir"
+		if recursive {
+			if err := os.RemoveAll(path); err != nil {
+				return nil, err
+			}
+		} else if err := os.Remove(path); err != nil {
+			return nil, err
+		}
+	} else if err := os.Remove(path); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"path":      Rel(r.workspace.Root, path),
+		"type":      kind,
+		"recursive": recursive && kind == "dir",
+	}, nil
+}
+
 func (r *ToolsetRegistry) workspaceApplyPatch(ctx context.Context, args map[string]any) (any, error) {
 	if r.workspace.Mode != ModeWork {
 		return nil, fmt.Errorf("workspace.apply_patch requires mode=work")
@@ -626,7 +732,15 @@ func (r *ToolsetRegistry) streamOutput(wg *sync.WaitGroup, reader io.Reader, buf
 }
 
 func (r *ToolsetRegistry) gitStatus(ctx context.Context, args map[string]any) (any, error) {
-	return r.git(ctx, []string{"status", "--short", "--branch"})
+	resultAny, err := r.git(ctx, []string{"status", "--short", "--branch"})
+	if err != nil {
+		return nil, err
+	}
+	result, _ := resultAny.(map[string]any)
+	info := WorkspaceGitInfo(r.workspace.Root)
+	result["git_info"] = info
+	result["dirty"] = info.Files > 0
+	return result, nil
 }
 
 func (r *ToolsetRegistry) gitDiff(ctx context.Context, args map[string]any) (any, error) {

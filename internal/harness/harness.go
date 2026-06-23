@@ -189,7 +189,8 @@ func (r *Runtime) ExecuteTool(ctx context.Context, req ToolCallRequest) (ToolCal
 // only pays for before/after snapshots and version blobs when they matter.
 func toolMutates(tool string) bool {
 	switch tool {
-	case "workspace.write_file", "workspace.apply_patch", "workspace.replace_lines", "terminal.run", "history.restore",
+	case "workspace.write_file", "workspace.apply_patch", "workspace.replace_lines", "workspace.mkdir", "workspace.move", "workspace.delete",
+		"terminal.run", "history.restore",
 		"git.checkout", "git.pull", "git.merge", "git.reset", "git.stash":
 		return true
 	}

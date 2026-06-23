@@ -16,6 +16,13 @@ func TestBuiltinToolSchemasDescribeArgs(t *testing.T) {
 	if !ok || !path.Required {
 		t.Fatalf("expected required path arg, got %#v", readFile.Args)
 	}
+	move, ok := schemas["workspace.move"]
+	if !ok {
+		t.Fatal("expected workspace.move schema")
+	}
+	if !move.Args["source_path"].Required || !move.Args["destination_path"].Required {
+		t.Fatalf("expected required move args, got %#v", move.Args)
+	}
 }
 
 func TestExecuteRejectsInvalidToolArgsBeforeHandler(t *testing.T) {

@@ -162,7 +162,7 @@ Harness 不會：
 - `default`：預設。高風險操作進 approval queue，回傳 `approval_required` 與一筆 approval record；operator 在 Web UI 核准後，agent 用相同參數加上 `approval_id` 重打即可執行。
 - `full_access`：高風險操作直接執行，適合 operator 正在現場監督的情境。
 
-目前列為高風險的操作包含檔案修改（`workspace_write_file`、`workspace_apply_patch`）、workspace version restore（`history_restore`）、project registry 變更（`project_add`、`project_create`、`project_clone`）、MCP 設定變更（`mcp_add`、`mcp_remove`）、呼叫未信任外接 MCP（`mcp_call`）、明顯破壞性的 shell command（`terminal_run`）。approval queue 與 access policy 都存在 `MCP_HARNESS_HOME/harness.db`。
+目前列為高風險的操作包含檔案修改（`workspace_mkdir`、`workspace_move`、`workspace_delete`、`workspace_write_file`、`workspace_apply_patch`、`workspace_replace_lines`）、workspace version restore（`history_restore`）、project registry 變更（`project_add`、`project_create`、`project_clone`、`project_rename`、`project_relocate`、`project_remove`）、MCP 設定變更（`mcp_add`、`mcp_remove`）、呼叫未信任外接 MCP（`mcp_call`）、明顯破壞性的 shell command（`terminal_run`）、以及會對 GitHub 造成對外變更的操作（`git_push`、`github_pr_create`、`github_pr_merge`、`github_issue_create`）。approval queue 與 access policy 都存在 `MCP_HARNESS_HOME/harness.db`。
 
 ### 多租戶與 OAuth（Logto）
 
@@ -219,11 +219,12 @@ direct MCP tools：
 - `harness`：回傳協議 prompt（rules + main）、projects、skills、access policy、目前 workspace、project instructions，以及一個 server 發的 `session_id`。先呼叫它,再用其他工具動手。不執行本機工作。
 - session 強制：`harness` 以外的每個 tool 都必須帶 `harness` 回傳的 `session_id`;server 端驗證,缺少、偽造或過期一律擋下並要求重新呼叫 `harness`。這保證 agent 動手前一定讀過協議 prompt。
 - 唯讀探索：`project_list`、`list_skills`、`mcp_list`、`approval_list`、`history_list`、`history_show`、`history_restore_preview`。
-- workspace：`workspace_list_files`、`workspace_read_file`（回 `numbered_content` 行號）、`workspace_search`、`workspace_write_file`、`workspace_apply_patch`、`workspace_replace_lines`（依行號片段改檔，避免整檔重寫）。
+- workspace：`workspace_list_files`、`workspace_read_file`（回 `numbered_content` 行號）、`workspace_search`、`workspace_grep`、`workspace_mkdir`、`workspace_move`、`workspace_delete`、`workspace_write_file`、`workspace_apply_patch`、`workspace_replace_lines`（依行號片段改檔，避免整檔重寫）。
 - terminal：`terminal_run`。
-- git：`git_status`、`git_diff`、`git_log`、`git_show`。
+- git：`git_status`、`git_diff`、`git_log`、`git_show`、`git_add`、`git_commit`、`git_checkout`、`git_branch`、`git_fetch`、`git_pull`、`git_push`、`git_merge`、`git_reset`、`git_stash`、`git_tag`。
 - project：`project_current`、`project_add`、`project_create`、`project_clone`、`project_rename`、`project_relocate`、`project_remove`。
 - skill：`use_skill`。
+- GitHub：`github_pr_create`、`github_pr_list`、`github_pr_view`、`github_pr_merge`、`github_issue_list`、`github_issue_create`、`github_issue_view`、`github_repo_view`。
 - 外接 MCP：`mcp_call`、`mcp_add`、`mcp_remove`。
 - restore：`history_restore`。
 
@@ -272,10 +273,11 @@ Agent 透過 project tools 管理 workspace：
 
 公開的 MCP tool 名稱用底線式（例如 `workspace_read_file`），內部 registry 仍用 `toolset.tool` 點式名稱與 schema；`internal/mcpserver` 的 `exec()` 負責轉換。內建能力分這幾組：
 
-- workspace：列目錄、讀檔、搜尋、寫檔、套 patch
+- workspace：列目錄、讀檔、搜尋、快速 grep、建立目錄、搬移/重新命名、刪除、寫檔、套 patch、依行號片段修改
 - terminal：`terminal_run` 執行命令，預設限制在專案根目錄或沙盒
-- git：status、diff、log、show 等非破壞性操作
-- project：顯示目前 workspace、註冊既有路徑、建立空 workspace、clone repo 並註冊 project
+- git：status、diff、log、show，以及常見 stage / commit / branch / fetch / pull / push / merge / reset / stash / tag 操作
+- GitHub：列 PR / issue、看單筆 PR / issue、看 repo 資訊、建立 PR / issue、merge PR
+- project：顯示目前 workspace、註冊既有路徑、建立空 workspace、clone repo 並註冊 project、重新命名、重指向、移除註冊
 - skill：列 skills、載入 skill
 - mcp：列出、新增、移除、呼叫外接 MCP server
 - history：列出 tool call history、查看單步 diff、還原 workspace version
@@ -355,7 +357,14 @@ Instructions...
 
 - 讀檔：`workspace_read_file` `{ "path": "README.md" }`
 - 搜尋：`workspace_search` `{ "pattern": "harness", "glob": "**/*.md" }`
+- 快速 grep：`workspace_grep` `{ "pattern": "git_status", "file_type": "go", "context": 2 }`
+- 建資料夾：`workspace_mkdir` `{ "path": "docs/adr" }`（改檔，走 approval）
+- 搬檔：`workspace_move` `{ "source_path": "tmp.txt", "destination_path": "notes/tmp.txt" }`（改檔，走 approval）
+- 刪除：`workspace_delete` `{ "path": "notes", "recursive": true }`（改檔，走 approval）
 - 套 patch：`workspace_apply_patch` `{ "patch": "*** Begin Patch\n..." }`（改檔，走 approval）
+- Git status：`git_status` `{}`（回短狀態文字，另附結構化 `git_info`，含 branch / upstream / ahead-behind / files changed）
+- 建 commit：`git_commit` `{ "message": "Update docs" }`
+- 開 PR：`github_pr_create` `{ "title": "Update docs", "body": "..." }`（對外操作，走 approval）
 - 跑測試：`terminal_run` `{ "command": "npm test", "timeout_ms": 120000 }`
 - 使用 skill：`use_skill` `{ "name": "code-review", "reason": "The user asked for a code review." }`
 - 呼叫外接 MCP：`mcp_call` `{ "server": "browser", "tool": "screenshot", "arguments": { "url": "http://localhost:3000" } }`
@@ -371,7 +380,7 @@ Instructions...
 - `diff`：前後 snapshot 的 line-level unified diff（LCS 計算，含 `@@` hunk 與前後 context；超大檔退回整檔置換）
 - `tool`、`args`、`status`、`error`：工具呼叫資訊
 
-這個機制包在 tool call 外層，所以 `workspace_write_file`、`workspace_apply_patch`、`terminal_run` 或 `history_restore` 改檔都會留下 diff。Web UI 把這份 unified diff 解析成左右並排、紅刪綠增、語法高亮的檢視。
+這個機制包在 tool call 外層，所以 `workspace_mkdir`、`workspace_move`、`workspace_delete`、`workspace_write_file`、`workspace_apply_patch`、`workspace_replace_lines`、`terminal_run` 或 `history_restore` 改檔都會留下 diff。Web UI 把這份 unified diff 解析成左右並排、紅刪綠增、語法高亮的檢視。
 
 目前 snapshot metadata 存在 SQLite，壓縮 snapshot JSON 存在 `MCP_HARNESS_HOME/history/blobs`。它會跳過 `.git`、`node_modules`、`vendor`、`dist`、`build` 等大型目錄，只保存文字檔內容；大型檔、二進位檔或超過上限的內容會標記為 omitted，因此不保證可完整還原這些檔案。尚未做 blob GC。
 

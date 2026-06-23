@@ -88,3 +88,29 @@ func TestFullAccessPolicyExecutesMutation(t *testing.T) {
 		t.Fatalf("file should be written under full_access: %v", err)
 	}
 }
+
+func TestDefaultAccessQueuesWorkspaceDeleteForApproval(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MCP_HARNESS_HOME", home)
+	target := filepath.Join(home, "sandbox", "note.txt")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := NewRuntime()
+	res, err := rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool: "workspace.delete",
+		Args: map[string]any{"path": "note.txt"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "approval_required" {
+		t.Fatalf("expected approval_required, got %#v", res)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("file should still exist before approval: %v", err)
+	}
+}

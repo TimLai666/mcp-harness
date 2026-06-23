@@ -73,6 +73,77 @@ func TestWorkspaceReplaceLinesEditsFragment(t *testing.T) {
 	}
 }
 
+func TestWorkspaceMkdirMoveDelete(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MCP_HARNESS_HOME", home)
+	t.Setenv(accessModeEnv, string(AccessFullAccess))
+	sandbox := filepath.Join(home, "sandbox")
+	if err := os.MkdirAll(sandbox, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(sandbox, "draft.txt")
+	if err := os.WriteFile(source, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := NewRuntime()
+
+	res, err := rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool: "workspace.mkdir",
+		Args: map[string]any{"path": "notes/archive"},
+	})
+	if err != nil || res.Status != "ok" {
+		t.Fatalf("mkdir failed: %#v err=%v", res, err)
+	}
+	if info, err := os.Stat(filepath.Join(sandbox, "notes", "archive")); err != nil || !info.IsDir() {
+		t.Fatalf("expected created directory, stat err=%v info=%#v", err, info)
+	}
+
+	res, err = rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool: "workspace.move",
+		Args: map[string]any{"source_path": "draft.txt", "destination_path": "notes/archive/final.txt"},
+	})
+	if err != nil || res.Status != "ok" {
+		t.Fatalf("move failed: %#v err=%v", res, err)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("expected source to move away, stat err=%v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(sandbox, "notes", "archive", "final.txt")); err != nil || string(got) != "hello\n" {
+		t.Fatalf("expected moved file content, err=%v got=%q", err, string(got))
+	}
+
+	res, err = rt.ExecuteTool(context.Background(), ToolCallRequest{
+		Tool: "workspace.delete",
+		Args: map[string]any{"path": "notes", "recursive": true},
+	})
+	if err != nil || res.Status != "ok" {
+		t.Fatalf("delete failed: %#v err=%v", res, err)
+	}
+	if _, err := os.Stat(filepath.Join(sandbox, "notes")); !os.IsNotExist(err) {
+		t.Fatalf("expected deleted directory, stat err=%v", err)
+	}
+}
+
+func TestWorkspaceDeleteRefusesWorkspaceRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MCP_HARNESS_HOME", home)
+	t.Setenv(accessModeEnv, string(AccessFullAccess))
+	sandbox := filepath.Join(home, "sandbox")
+	if err := os.MkdirAll(sandbox, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, err := NewRuntime().ExecuteTool(context.Background(), ToolCallRequest{
+		Tool: "workspace.delete",
+		Args: map[string]any{"path": ".", "recursive": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "error" || !strings.Contains(res.Error, "workspace root") {
+		t.Fatalf("expected root-delete refusal, got %#v", res)
+	}
+}
+
 func TestListSessionsScopedToProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MCP_HARNESS_HOME", home)

@@ -11,14 +11,15 @@ import (
 // GitInfo is a structured summary of a workspace's git state for the Web UI:
 // current branch and how many lines/files changed since the last commit.
 type GitInfo struct {
-	IsRepo  bool   `json:"is_repo"`
-	Branch  string `json:"branch,omitempty"`
-	Added   int    `json:"added"`
-	Removed int    `json:"removed"`
-	Files   int    `json:"files_changed"`
-	Ahead   int    `json:"ahead,omitempty"`
-	Behind  int    `json:"behind,omitempty"`
-	Remote  string `json:"remote,omitempty"`
+	IsRepo   bool   `json:"is_repo"`
+	Branch   string `json:"branch,omitempty"`
+	Upstream string `json:"upstream,omitempty"`
+	Added    int    `json:"added"`
+	Removed  int    `json:"removed"`
+	Files    int    `json:"files_changed"`
+	Ahead    int    `json:"ahead,omitempty"`
+	Behind   int    `json:"behind,omitempty"`
+	Remote   string `json:"remote,omitempty"`
 }
 
 // WorkspaceGitInfo inspects a workspace root and returns its branch and a diff
@@ -31,6 +32,9 @@ func WorkspaceGitInfo(root string) GitInfo {
 	}
 	info.IsRepo = true
 	info.Branch = strings.TrimSpace(branch)
+	if out, ok := runGitInfo(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); ok {
+		info.Upstream = strings.TrimSpace(out)
+	}
 
 	stat, ok := runGitInfo(root, "diff", "--numstat", "HEAD")
 	if !ok {
