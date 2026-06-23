@@ -654,8 +654,12 @@ const indexHTML = `<!doctype html>
     .hero-title h2 { margin-bottom:4px; font-size:22px; }
     .hero-meta { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 0; }
     .hero-note { margin-top:10px; padding:10px 12px; border-radius:12px; background:rgba(255,255,255,.78); border:1px solid rgba(184,194,209,.7); }
-    .git-console { margin-top:14px; display:grid; grid-template-columns:1.2fr 1fr; gap:12px; }
+    .git-console { margin-top:14px; display:grid; grid-template-columns:minmax(0, 1.05fr) minmax(0, .95fr); gap:12px; align-items:start; }
     .git-panel { min-height:100%; }
+    .git-summary-card { grid-column:1 / -1; }
+    .git-branch-card { grid-column:1; }
+    .git-stage-card { grid-column:2; }
+    .git-commit-card { grid-column:1 / -1; }
     .git-summary { padding:12px; border-radius:14px; background:#0f1728; color:#eff5ff; }
     .git-summary strong { display:inline; }
     .git-summary-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; margin-top:10px; }
@@ -666,6 +670,7 @@ const indexHTML = `<!doctype html>
     .toolbar-row { display:grid; grid-template-columns:1.2fr .8fr; gap:8px; align-items:end; }
     .toolbar-row-3 { display:grid; grid-template-columns:1fr 1fr auto; gap:8px; align-items:end; }
     .toolbar-actions { display:flex; gap:8px; align-items:center; }
+    .toolbar-actions.wrap { flex-wrap:wrap; }
     .toolbar-actions button { margin-top:0; }
     .status-list { display:flex; flex-direction:column; gap:8px; max-height:210px; overflow:auto; margin-top:10px; }
     .status-row { display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:flex-start; padding:8px 10px; border-radius:12px; border:1px solid rgba(184,194,209,.7); background:rgba(255,255,255,.86); }
@@ -699,11 +704,17 @@ const indexHTML = `<!doctype html>
     .card-head { display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:8px; }
     .stack { display:flex; flex-direction:column; gap:12px; }
     .tiny { font-size:11px; color:var(--muted); }
+    .side-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
+    .side-tab { width:auto; margin-top:0; padding:8px 12px; border-radius:999px; background:rgba(255,255,255,.88); color:var(--muted); border:1px solid rgba(184,194,209,.9); box-shadow:none; }
+    .side-tab.active { background:linear-gradient(180deg, var(--accent), var(--accent-strong)); color:#fff; border-color:var(--accent-strong); box-shadow:0 8px 20px rgba(15,108,92,.16); }
+    .side-pane { display:none; }
+    .side-pane.active { display:block; }
     #terminal .hljs { background:transparent; padding:0; }
     @media (max-width: 1200px) {
       .shell { grid-template-columns:280px minmax(0,1fr); }
       section { grid-column:1 / -1; border-top:1px solid rgba(184,194,209,.7); max-height:none; }
       .git-console { grid-template-columns:1fr; }
+      .git-summary-card, .git-branch-card, .git-stage-card, .git-commit-card { grid-column:auto; }
     }
     @media (max-width: 900px) {
       .shell { grid-template-columns:1fr; }
@@ -742,55 +753,53 @@ const indexHTML = `<!doctype html>
         </div>
         <div id="actionStatus" class="hero-note muted">Select a project to use branch, commit, and push controls.</div>
         <div class="git-console">
-          <div class="git-panel">
+          <div class="git-panel git-summary-card">
             <div id="gitSummary" class="git-summary">
               <strong>Git snapshot unavailable</strong>
               <div class="tiny" style="color:rgba(239,245,255,.7);margin-top:6px">This workspace is not a git repository, or no project is selected.</div>
             </div>
           </div>
-          <div class="stack">
-            <div class="toolbar-card">
-              <div class="card-head">
-                <strong>Switch Branch</strong>
-                <span class="tiny">Manual branch control</span>
-              </div>
-              <label>Existing branch</label>
-              <select id="checkoutBranch"></select>
-              <button class="secondary" onclick="checkoutSelectedBranch()">Checkout selected branch</button>
-              <label>New branch</label>
-              <div class="toolbar-row">
-                <input id="newBranch" placeholder="feature/web-console">
-                <button onclick="createBranch()">Create + checkout</button>
+          <div class="toolbar-card git-branch-card">
+            <div class="card-head">
+              <strong>Switch Branch</strong>
+              <span class="tiny">Manual branch control</span>
+            </div>
+            <label>Existing branch</label>
+            <select id="checkoutBranch"></select>
+            <button class="secondary" onclick="checkoutSelectedBranch()">Checkout selected branch</button>
+            <label>New branch</label>
+            <div class="toolbar-row">
+              <input id="newBranch" placeholder="feature/web-console">
+              <button onclick="createBranch()">Create + checkout</button>
+            </div>
+          </div>
+          <div class="toolbar-card git-stage-card">
+            <div class="card-head">
+              <strong>Stage And Sync</strong>
+              <div class="toolbar-actions wrap">
+                <button class="secondary" style="width:auto" onclick="fetchChanges()">Fetch</button>
+                <button class="secondary" style="width:auto" onclick="pullChanges()">Pull (ff-only)</button>
               </div>
             </div>
-            <div class="toolbar-card">
-              <div class="card-head">
-                <strong>Stage And Sync</strong>
-                <div class="toolbar-actions">
-                  <button class="secondary" style="width:auto" onclick="fetchChanges()">Fetch</button>
-                  <button class="secondary" style="width:auto" onclick="pullChanges()">Pull (ff-only)</button>
-                </div>
-              </div>
-              <div class="toolbar-actions" style="margin-top:8px">
-                <button class="secondary" style="width:auto" onclick="stageAllChanges()">Stage all</button>
-                <button class="secondary" style="width:auto" onclick="stageSelectedChanges()">Stage selected</button>
-              </div>
-              <div id="statusEntries" class="status-list"></div>
+            <div class="toolbar-actions wrap" style="margin-top:8px">
+              <button class="secondary" style="width:auto" onclick="stageAllChanges()">Stage all</button>
+              <button class="secondary" style="width:auto" onclick="stageSelectedChanges()">Stage selected</button>
             </div>
-            <div class="toolbar-card">
-              <div class="card-head">
-                <strong>Commit And Push</strong>
-                <span class="tiny">Operator actions</span>
-              </div>
-              <label>Commit message</label>
-              <textarea id="commitMessage" placeholder="Describe this change"></textarea>
-              <button onclick="commitChanges()">Commit staged changes</button>
-              <label>Push remote / branch</label>
-              <div class="toolbar-row-3">
-                <input id="pushRemote" value="origin" placeholder="origin">
-                <input id="pushBranch" placeholder="current branch">
-                <button onclick="pushChanges()">Push</button>
-              </div>
+            <div id="statusEntries" class="status-list"></div>
+          </div>
+          <div class="toolbar-card git-commit-card">
+            <div class="card-head">
+              <strong>Commit And Push</strong>
+              <span class="tiny">Operator actions</span>
+            </div>
+            <label>Commit message</label>
+            <textarea id="commitMessage" placeholder="Describe this change"></textarea>
+            <button onclick="commitChanges()">Commit staged changes</button>
+            <label>Push remote / branch</label>
+            <div class="toolbar-row-3">
+              <input id="pushRemote" value="origin" placeholder="origin">
+              <input id="pushBranch" placeholder="current branch">
+              <button onclick="pushChanges()">Push</button>
             </div>
           </div>
         </div>
@@ -810,40 +819,62 @@ const indexHTML = `<!doctype html>
     </main>
     <section>
       <h2>Details</h2>
-      <div id="detail" class="card muted">Select a session, tool call, history event, or approval.</div>
-      <h3>MCP Activity <span id="liveDot" class="pill">offline</span></h3>
-      <div id="activity" class="card muted">No MCP calls yet.</div>
-      <h3>Live Terminal</h3>
-      <div class="card">
-        <small id="terminalHeader" class="muted">Waiting for terminal_run output…</small>
-        <pre id="terminal"></pre>
+      <div class="side-tabs">
+        <button id="sideTab-inspect" class="side-tab active" onclick="switchSideTab('inspect')">Inspect</button>
+        <button id="sideTab-ops" class="side-tab" onclick="switchSideTab('ops')">Ops</button>
+        <button id="sideTab-catalog" class="side-tab" onclick="switchSideTab('catalog')">Catalog</button>
       </div>
-      <h3>Access Policy</h3>
-      <div class="card">
-        <small class="muted">Operator-controlled. Agents cannot change this.</small>
-        <label>Mode</label>
-        <select id="accessMode" onchange="setAccessMode()">
-          <option value="default">default (queue high-risk ops for approval)</option>
-          <option value="full_access">full_access (run high-risk ops directly)</option>
-        </select>
+      <div id="sidePane-inspect" class="side-pane active">
+        <div id="detail" class="card muted">Select a session, tool call, history event, or approval.</div>
+        <h3>MCP Activity <span id="liveDot" class="pill">offline</span></h3>
+        <div id="activity" class="card muted">No MCP calls yet.</div>
+        <h3>Live Terminal</h3>
+        <div class="card">
+          <small id="terminalHeader" class="muted">Waiting for terminal_run output…</small>
+          <pre id="terminal"></pre>
+        </div>
       </div>
-      <h3>Approvals</h3>
-      <div id="approvals"></div>
-      <h3>MCP Servers</h3>
-      <div id="mcps"></div>
-      <h3>Skills</h3>
-      <div id="skills"></div>
+      <div id="sidePane-ops" class="side-pane">
+        <h3>Access Policy</h3>
+        <div class="card">
+          <small class="muted">Operator-controlled. Agents cannot change this.</small>
+          <label>Mode</label>
+          <select id="accessMode" onchange="setAccessMode()">
+            <option value="default">default (queue high-risk ops for approval)</option>
+            <option value="full_access">full_access (run high-risk ops directly)</option>
+          </select>
+        </div>
+        <h3>Approvals</h3>
+        <div id="approvals"></div>
+      </div>
+      <div id="sidePane-catalog" class="side-pane">
+        <h3>MCP Servers</h3>
+        <div id="mcps"></div>
+        <h3>Skills</h3>
+        <div id="skills"></div>
+      </div>
     </section>
   </div>
   <script>
     let selectedProject = '';
     let selectedProjectName = 'Default sandbox';
     let selectedSession = '';
+    let currentSideTab = 'inspect';
     let currentGit = null;
     let currentBranches = [];
     let currentStatusEntries = [];
     const escapeHTML = (text) => String(text).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    function switchSideTab(tab) {
+      currentSideTab = tab;
+      for (const pane of document.querySelectorAll('.side-pane')) pane.classList.remove('active');
+      for (const button of document.querySelectorAll('.side-tab')) button.classList.remove('active');
+      const pane = document.getElementById('sidePane-' + tab);
+      const button = document.getElementById('sideTab-' + tab);
+      if (pane) pane.classList.add('active');
+      if (button) button.classList.add('active');
+    }
     function setDetail(value) {
+      switchSideTab('inspect');
       const detail = document.getElementById('detail');
       detail.className = 'card';
       detail.innerHTML = '<pre>' + escapeHTML(typeof value === 'string' ? value : JSON.stringify(value, null, 2)) + '</pre>';
