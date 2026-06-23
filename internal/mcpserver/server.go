@@ -31,6 +31,7 @@ func nextActivityID() string {
 // rejected before the handler runs, which forces the agent through the protocol
 // guide before it can do anything.
 func addTool[In any](server *mcp.Server, runtime *harness.Runtime, tool *mcp.Tool, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error)) {
+	tool = ensureToolOutputSchema(tool)
 	name := tool.Name
 	mcp.AddTool(server, tool, func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
 		id := nextActivityID()
@@ -53,6 +54,7 @@ func addTool[In any](server *mcp.Server, runtime *harness.Runtime, tool *mcp.Too
 // addOpenTool registers a tool that does not require a session_id. Only the
 // harness tool uses it, since it is what mints the session id in the first place.
 func addOpenTool[In any](server *mcp.Server, tool *mcp.Tool, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error)) {
+	tool = ensureToolOutputSchema(tool)
 	name := tool.Name
 	mcp.AddTool(server, tool, func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
 		id := nextActivityID()

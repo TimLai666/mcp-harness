@@ -70,3 +70,58 @@ func TestEveryToolCallEmitsActivityEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestAllToolsAdvertiseOutputSchemaAndStructuredContent(t *testing.T) {
+	t.Setenv("MCP_HARNESS_HOME", t.TempDir())
+	ctx := context.Background()
+
+	server := New(harness.NewRuntime())
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	if _, err := server.Connect(ctx, serverTransport, nil); err != nil {
+		t.Fatal(err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "0.1.0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	tools, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools.Tools) == 0 {
+		t.Fatal("expected MCP tools")
+	}
+	for _, tool := range tools.Tools {
+		if tool.OutputSchema == nil {
+			t.Fatalf("tool %q is missing outputSchema", tool.Name)
+		}
+	}
+
+	guide, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "harness", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guide.StructuredContent == nil {
+		t.Fatal("expected harness to return structured content")
+	}
+
+	guideMap, ok := guide.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("expected harness structured content to be an object, got %#v", guide.StructuredContent)
+	}
+	sid, _ := guideMap["session_id"].(string)
+	if sid == "" {
+		t.Fatal("expected harness structured content to include session_id")
+	}
+
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "project_list", Arguments: map[string]any{"session_id": sid}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StructuredContent == nil {
+		t.Fatal("expected project_list to return structured content")
+	}
+}

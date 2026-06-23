@@ -20,6 +20,7 @@
 - `cmd/mcp-harness-web`：Web UI 控制台與遠端 MCP Streamable HTTP endpoint
 - `internal/harness`：單一工具執行、專案解析、沙盒、`@檔案` references、skills loader、toolset registry
 - direct MCP tools：每個能力一個結構化參數的窄工具（`workspace_*`、`terminal_run`、`git_*`、`project_*`、`use_skill`、`mcp_*`、`history_*`），不再用 DSL；`harness` 只回傳協議 prompt
+- tool output schema：所有內建 direct MCP tools 都會宣告 `outputSchema`，並透過 MCP `StructuredContent` 回傳結構化結果；`mcp_call` 會宣告固定 envelope schema，但外部工具自己的 `structuredContent` 仍由外部 server 決定
 - `prompts/main.md`：harness protocol prompt
 - `prompts/rules.md`：通用工作規則
 - `AGENTS.md`：本 repo 的開發與文件維護規則
@@ -144,7 +145,7 @@ Harness 會：
 
 - 透過 `harness` tool 回傳協議 prompt 與環境概況（projects、skills、access policy、目前 workspace、project instructions）
 - 在選定專案或預設沙盒中執行讀寫、搜尋、shell、git 等操作
-- 回傳結構化結果與錯誤
+- 回傳結構化結果與錯誤；內建 MCP tools 會在 tool metadata 宣告 `outputSchema`
 - 記錄每個會改檔的操作，供 Web UI 檢視與審核
 - 對會改檔的 tool call 擷取執行前後 snapshot；即使檔案是被 `terminal_run` 改到，也會計算 diff
 
@@ -271,7 +272,7 @@ Agent 透過 project tools 管理 workspace：
 
 ### Tools 與 toolset namespace
 
-公開的 MCP tool 名稱用底線式（例如 `workspace_read_file`），內部 registry 仍用 `toolset.tool` 點式名稱與 schema；`internal/mcpserver` 的 `exec()` 負責轉換。內建能力分這幾組：
+公開的 MCP tool 名稱用底線式（例如 `workspace_read_file`），內部 registry 仍用 `toolset.tool` 點式名稱與 schema；`internal/mcpserver` 的 `exec()` 負責轉換。每個內建 MCP tool 都會宣告 input schema 與 output schema。內建能力分這幾組：
 
 - workspace：列目錄、讀檔、搜尋、快速 grep、建立目錄、搬移/重新命名、刪除、寫檔、套 patch、依行號片段修改
 - terminal：`terminal_run` 執行命令，預設限制在專案根目錄或沙盒

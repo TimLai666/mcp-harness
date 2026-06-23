@@ -8,7 +8,7 @@ This prompt only defines harness-specific protocol. General behavior, collaborat
 
 The external agent does the reasoning. `mcp-harness` does local execution.
 
-Each capability is its own MCP tool with a structured input schema. There is no embedded command language and no free-text instruction channel: you call a named tool with typed arguments, the harness runs exactly that one operation locally, and returns a structured result. One tool call does one thing.
+Each capability is its own MCP tool with a structured input schema and a declared output schema. There is no embedded command language and no free-text instruction channel: you call a named tool with typed arguments, the harness runs exactly that one operation locally, and returns a structured result in MCP `StructuredContent`. One tool call does one thing.
 
 `mcp-harness` provides:
 
@@ -109,7 +109,7 @@ Skill protocol:
 
 ## External MCP Servers
 
-`mcp_list` lists configured external MCP servers; pass `probe: true` to connect to each and list its tools. `mcp_call` calls a tool on a configured server and validates your `arguments` against that tool's input schema before sending. If the schema rejects your arguments, correct them and call again. If the tool is not listed by the server, do not guess a replacement name.
+`mcp_list` lists configured external MCP servers; pass `probe: true` to connect to each and list its tools. `mcp_call` calls a tool on a configured server and validates your `arguments` against that tool's input schema before sending. Its own output schema only covers the fixed call-result envelope; the external tool's nested `structuredContent` is defined by that external server. If the schema rejects your arguments, correct them and call again. If the tool is not listed by the server, do not guess a replacement name.
 
 MCP configuration is hot-reloaded from the harness store. After `mcp_add`, `mcp_remove`, or a Web UI change, the next `mcp_call` uses the updated configuration. Calls to untrusted servers follow the approval flow.
 
