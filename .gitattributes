@@ -1,2 +1,16 @@
-# Auto detect text files and perform LF normalization
+# Normalize text by default, then pin common repo text files to LF so
+# Windows checkouts do not drift based on local Git settings.
 * text=auto
+
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+LICENSE text eol=lf
+.dockerignore text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.env.example text eol=lf

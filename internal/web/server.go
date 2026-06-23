@@ -443,7 +443,7 @@ const indexHTML = `<!doctype html>
     .diff-file-head { background:#161b22; color:#c9d1d9; padding:5px 10px; font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; word-break:break-all; }
     .diff-table { width:100%; border-collapse:collapse; table-layout:fixed; font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; }
     .diff-table td { vertical-align:top; padding:0; }
-    .diff-table td.ln { width:42px; text-align:right; padding:0 6px; color:#6e7681; background:#0d1117; user-select:none; border-right:1px solid #21262d; white-space:nowrap; }
+    .diff-table td.ln { width:4ch; text-align:right; padding:0 4px; color:#6e7681; background:#0d1117; user-select:none; border-right:1px solid #21262d; white-space:nowrap; }
     .diff-table td.code { padding:0 8px; white-space:pre-wrap; word-break:break-word; color:#c9d1d9; }
     .diff-table td.code .hljs { background:transparent; padding:0; display:inline; }
     .diff-table tr.ctx td.code { color:#9da7b3; }
