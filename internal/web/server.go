@@ -672,6 +672,8 @@ const indexHTML = `<!doctype html>
     .toolbar-actions { display:flex; gap:8px; align-items:center; }
     .toolbar-actions.wrap { flex-wrap:wrap; }
     .toolbar-actions button { margin-top:0; }
+    .git-busy-note { display:inline-flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; }
+    .git-busy-note:before { content:""; width:10px; height:10px; border-radius:999px; border:2px solid rgba(15,108,92,.25); border-top-color:var(--accent); animation:spin .8s linear infinite; }
     .status-list { display:flex; flex-direction:column; gap:8px; max-height:210px; overflow:auto; margin-top:10px; }
     .status-row { display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:flex-start; padding:8px 10px; border-radius:12px; border:1px solid rgba(184,194,209,.7); background:rgba(255,255,255,.86); }
     .status-row code { font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; color:var(--ink); word-break:break-word; }
@@ -709,6 +711,7 @@ const indexHTML = `<!doctype html>
     .side-tab.active { background:linear-gradient(180deg, var(--accent), var(--accent-strong)); color:#fff; border-color:var(--accent-strong); box-shadow:0 8px 20px rgba(15,108,92,.16); }
     .side-pane { display:none; }
     .side-pane.active { display:block; }
+    @keyframes spin { to { transform:rotate(360deg); } }
     #terminal .hljs { background:transparent; padding:0; }
     @media (max-width: 1200px) {
       .shell { grid-template-columns:280px minmax(0,1fr); }
@@ -748,7 +751,8 @@ const indexHTML = `<!doctype html>
             </div>
           </div>
           <div class="toolbar-actions">
-            <button class="secondary" style="width:auto" onclick="refreshGitConsole()">Refresh Git</button>
+            <div id="gitBusyNote" class="git-busy-note" style="display:none">Git action in progress</div>
+            <button id="refreshGitButton" data-git-control data-idle-label="Refresh Git" class="secondary" style="width:auto" onclick="manualRefreshGit(this)">Refresh Git</button>
           </div>
         </div>
         <div id="actionStatus" class="hero-note muted">Select a project to use branch, commit, and push controls.</div>
@@ -765,25 +769,25 @@ const indexHTML = `<!doctype html>
               <span class="tiny">Manual branch control</span>
             </div>
             <label>Existing branch</label>
-            <select id="checkoutBranch"></select>
-            <button class="secondary" onclick="checkoutSelectedBranch()">Checkout selected branch</button>
+            <select id="checkoutBranch" data-git-control></select>
+            <button data-git-control data-idle-label="Checkout selected branch" data-busy-label="Checking out..." class="secondary" onclick="checkoutSelectedBranch(this)">Checkout selected branch</button>
             <label>New branch</label>
             <div class="toolbar-row">
-              <input id="newBranch" placeholder="feature/web-console">
-              <button onclick="createBranch()">Create + checkout</button>
+              <input id="newBranch" data-git-control placeholder="feature/web-console">
+              <button data-git-control data-idle-label="Create + checkout" data-busy-label="Creating branch..." onclick="createBranch(this)">Create + checkout</button>
             </div>
           </div>
           <div class="toolbar-card git-stage-card">
             <div class="card-head">
               <strong>Stage And Sync</strong>
               <div class="toolbar-actions wrap">
-                <button class="secondary" style="width:auto" onclick="fetchChanges()">Fetch</button>
-                <button class="secondary" style="width:auto" onclick="pullChanges()">Pull (ff-only)</button>
+                <button data-git-control data-idle-label="Fetch" data-busy-label="Fetching..." class="secondary" style="width:auto" onclick="fetchChanges(this)">Fetch</button>
+                <button data-git-control data-idle-label="Pull (ff-only)" data-busy-label="Pulling..." class="secondary" style="width:auto" onclick="pullChanges(this)">Pull (ff-only)</button>
               </div>
             </div>
             <div class="toolbar-actions wrap" style="margin-top:8px">
-              <button class="secondary" style="width:auto" onclick="stageAllChanges()">Stage all</button>
-              <button class="secondary" style="width:auto" onclick="stageSelectedChanges()">Stage selected</button>
+              <button data-git-control data-idle-label="Stage all" data-busy-label="Staging..." class="secondary" style="width:auto" onclick="stageAllChanges(this)">Stage all</button>
+              <button data-git-control data-idle-label="Stage selected" data-busy-label="Staging..." class="secondary" style="width:auto" onclick="stageSelectedChanges(this)">Stage selected</button>
             </div>
             <div id="statusEntries" class="status-list"></div>
           </div>
@@ -793,13 +797,13 @@ const indexHTML = `<!doctype html>
               <span class="tiny">Operator actions</span>
             </div>
             <label>Commit message</label>
-            <textarea id="commitMessage" placeholder="Describe this change"></textarea>
-            <button onclick="commitChanges()">Commit staged changes</button>
+            <textarea id="commitMessage" data-git-control placeholder="Describe this change"></textarea>
+            <button data-git-control data-idle-label="Commit staged changes" data-busy-label="Committing..." onclick="commitChanges(this)">Commit staged changes</button>
             <label>Push remote / branch</label>
             <div class="toolbar-row-3">
-              <input id="pushRemote" value="origin" placeholder="origin">
-              <input id="pushBranch" placeholder="current branch">
-              <button onclick="pushChanges()">Push</button>
+              <input id="pushRemote" data-git-control value="origin" placeholder="origin">
+              <input id="pushBranch" data-git-control placeholder="current branch">
+              <button data-git-control data-idle-label="Push" data-busy-label="Pushing..." onclick="pushChanges(this)">Push</button>
             </div>
           </div>
         </div>
@@ -860,6 +864,7 @@ const indexHTML = `<!doctype html>
     let selectedProjectName = 'Default sandbox';
     let selectedSession = '';
     let currentSideTab = 'inspect';
+    let gitBusy = false;
     let currentGit = null;
     let currentBranches = [];
     let currentStatusEntries = [];
@@ -883,6 +888,23 @@ const indexHTML = `<!doctype html>
       const box = document.getElementById('actionStatus');
       box.className = 'hero-note notice ' + tone;
       box.textContent = message;
+    }
+    function setGitBusyState(busy, activeButton=null, note='Git action in progress') {
+      gitBusy = busy;
+      const busyNote = document.getElementById('gitBusyNote');
+      if (busyNote) {
+        busyNote.textContent = note;
+        busyNote.style.display = busy ? 'inline-flex' : 'none';
+      }
+      for (const node of document.querySelectorAll('[data-git-control]')) {
+        node.disabled = busy;
+        if (node.tagName === 'BUTTON') {
+          if (!node.dataset.idleLabel) node.dataset.idleLabel = node.textContent.trim();
+          const busyLabel = node.dataset.busyLabel || node.dataset.idleLabel;
+          node.textContent = busy && node === activeButton ? busyLabel : node.dataset.idleLabel;
+        }
+      }
+      if (activeButton && busy) activeButton.disabled = true;
     }
     function renderProjectMeta(git) {
       const meta = document.getElementById('projectMeta');
@@ -987,6 +1009,16 @@ const indexHTML = `<!doctype html>
         populateBranchSelect([], null);
         renderStatusEntries([]);
         setActionStatus('Could not load git info: ' + e, 'bad');
+      }
+    }
+    async function manualRefreshGit(button) {
+      if (gitBusy) return;
+      setGitBusyState(true, button, 'Refreshing git status');
+      setActionStatus('Refreshing git status...', 'muted');
+      try {
+        await refreshGitConsole();
+      } finally {
+        setGitBusyState(false);
       }
     }
     async function refreshProjects() {
@@ -1258,7 +1290,10 @@ const indexHTML = `<!doctype html>
       setDetail(await res.json());
       await refreshProjects();
     }
-    async function performGitAction(url, payload, successMessage) {
+    async function performGitAction(url, payload, successMessage, button=null, busyNote='Git action in progress') {
+      if (gitBusy) return;
+      setGitBusyState(true, button, busyNote);
+      setActionStatus(busyNote + '...', 'muted');
       try {
         const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
         const data = await res.json();
@@ -1277,67 +1312,69 @@ const indexHTML = `<!doctype html>
         setActionStatus(successMessage, 'ok');
       } catch (e) {
         setActionStatus('Git action failed: ' + e, 'bad');
+      } finally {
+        setGitBusyState(false);
       }
     }
-    async function checkoutSelectedBranch() {
+    async function checkoutSelectedBranch(button) {
       const ref = document.getElementById('checkoutBranch').value;
       if (!ref) {
         setActionStatus('Choose a branch to checkout.', 'bad');
         return;
       }
-      await performGitAction('/api/git/checkout', { project: selectedProject, ref, create: false }, 'Checked out ' + ref + '.');
+      await performGitAction('/api/git/checkout', { project: selectedProject, ref, create: false }, 'Checked out ' + ref + '.', button, 'Checking out branch');
     }
-    async function createBranch() {
+    async function createBranch(button) {
       const ref = document.getElementById('newBranch').value.trim();
       if (!ref) {
         setActionStatus('Enter a branch name to create.', 'bad');
         return;
       }
-      await performGitAction('/api/git/checkout', { project: selectedProject, ref, create: true }, 'Created and checked out ' + ref + '.');
+      await performGitAction('/api/git/checkout', { project: selectedProject, ref, create: true }, 'Created and checked out ' + ref + '.', button, 'Creating branch');
       document.getElementById('newBranch').value = '';
     }
-    async function stageAllChanges() {
+    async function stageAllChanges(button) {
       const paths = (currentStatusEntries || []).map(entry => entry.path).filter(Boolean);
       if (!paths.length) {
         setActionStatus('No changed files to stage.', 'bad');
         return;
       }
-      await performGitAction('/api/git/add', { project: selectedProject, paths }, 'Staged all changed files.');
+      await performGitAction('/api/git/add', { project: selectedProject, paths }, 'Staged all changed files.', button, 'Staging changed files');
     }
-    async function stageSelectedChanges() {
+    async function stageSelectedChanges(button) {
       const paths = selectedStatusPaths();
       if (!paths.length) {
         setActionStatus('Select at least one file to stage.', 'bad');
         return;
       }
-      await performGitAction('/api/git/add', { project: selectedProject, paths }, 'Staged selected files.');
+      await performGitAction('/api/git/add', { project: selectedProject, paths }, 'Staged selected files.', button, 'Staging selected files');
     }
-    async function fetchChanges() {
+    async function fetchChanges(button) {
       const remote = document.getElementById('pushRemote').value.trim() || 'origin';
-      await performGitAction('/api/git/fetch', { project: selectedProject, remote }, 'Fetched from ' + remote + '.');
+      await performGitAction('/api/git/fetch', { project: selectedProject, remote }, 'Fetched from ' + remote + '.', button, 'Fetching remote updates');
     }
-    async function pullChanges() {
+    async function pullChanges(button) {
       const remote = document.getElementById('pushRemote').value.trim() || 'origin';
       const branch = document.getElementById('pushBranch').value.trim() || (currentGit && currentGit.branch) || '';
-      await performGitAction('/api/git/pull', { project: selectedProject, remote, branch, ff_only: true }, 'Pulled latest changes (ff-only).');
+      await performGitAction('/api/git/pull', { project: selectedProject, remote, branch, ff_only: true }, 'Pulled latest changes (ff-only).', button, 'Pulling latest changes');
     }
-    async function commitChanges() {
+    async function commitChanges(button) {
       const message = document.getElementById('commitMessage').value.trim();
       if (!message) {
         setActionStatus('Commit message is required.', 'bad');
         return;
       }
-      await performGitAction('/api/git/commit', { project: selectedProject, message, all: false }, 'Commit created.');
+      await performGitAction('/api/git/commit', { project: selectedProject, message, all: false }, 'Commit created.', button, 'Creating commit');
       document.getElementById('commitMessage').value = '';
     }
-    async function pushChanges() {
+    async function pushChanges(button) {
       const remote = document.getElementById('pushRemote').value.trim() || 'origin';
       const branch = document.getElementById('pushBranch').value.trim() || (currentGit && currentGit.branch) || '';
       if (!branch) {
         setActionStatus('Branch name is required before push.', 'bad');
         return;
       }
-      await performGitAction('/api/git/push', { project: selectedProject, remote, branch, set_upstream: true, force: false }, 'Pushed ' + branch + ' to ' + remote + '.');
+      await performGitAction('/api/git/push', { project: selectedProject, remote, branch, set_upstream: true, force: false }, 'Pushed ' + branch + ' to ' + remote + '.', button, 'Pushing branch');
     }
     async function refreshAccessMode() {
       const res = await fetch('/api/settings/access-mode');
